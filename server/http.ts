@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { BoundedEventStore } from "./event-store.js";
 import {
   allowedHosts,
   bearerToken,
@@ -149,6 +150,8 @@ export async function startHttpServer(opts: HttpServerOptions): Promise<McpHttpS
     const server = opts.createMcpServer(token);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
+      // Resumable streams: a client that lost its SSE stream reconnects with Last-Event-ID.
+      eventStore: new BoundedEventStore(),
       onsessioninitialized: (id) => {
         sessions.set(id, { id, tokenId: token.id, transport, server, lastSeen: Date.now(), inFlight: 0 });
         log("info", `MCP session ${id.slice(0, 8)} opened by token "${token.label}" (${token.scope})`);

@@ -11,6 +11,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
 import { loadConfig, readLocalCredential, type Config } from "./config.js";
 import { errText, registerTools } from "./tools.js";
+import { EventHub } from "./events.js";
+import { ClientEventSource, fetchPreview } from "./agent-source.js";
+import { registerAgentResources } from "./resources.js";
 
 const cfg: Config = loadConfig();
 
@@ -71,8 +74,20 @@ async function paseo(): Promise<PaseoClient> {
 
 // ---------------------------------------------------------------- server
 
-const server = new McpServer({ name: "paseo", version: "0.2.0" });
-registerTools(server, { config: () => cfg, paseo });
+const hub = cfg.events.enabled
+  ? new EventHub({
+      capacity: cfg.events.bufferSize,
+      ttlMs: cfg.events.ttlMinutes * 60_000,
+      previewChars: cfg.events.previewChars,
+    })
+  : undefined;
+// Events start with the server, not with the first tool call, so nothing before it is missed.
+const source = hub ? new ClientEventSource({ hub, paseo, preview: fetchPreview }) : undefined;
+source?.start();
+
+const server = new McpServer({ name: "paseo", version: "0.3.0" });
+if (hub) registerAgentResources(server, { events: hub, paseo });
+registerTools(server, { config: () => cfg, paseo, events: hub });
 
 // ---------------------------------------------------------------- start
 
@@ -84,6 +99,7 @@ const shutdown = async () => {
   shuttingDown = true;
   // Don't let a hanging WebSocket close keep the process alive.
   setTimeout(() => process.exit(0), 2000).unref();
+  source?.stop();
   await client?.close().catch(() => {});
   process.exit(0);
 };

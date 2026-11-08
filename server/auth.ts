@@ -15,6 +15,8 @@ export interface TokenRecord {
   createdAt: string;
   /** `origin` label on agents this token creates; defaults to the label. */
   origin?: string;
+  /** Only events and resources of agents with all these labels. */
+  labelFilter?: Record<string, string>;
 }
 
 const TOKEN_PREFIX = "pmcp_";
@@ -29,7 +31,10 @@ export function hashToken(token: string): string {
 }
 
 /** A new token and the record to store for it. The token is returned once and kept nowhere. */
-export function newToken(input: { label: string; scope: Scope; origin?: string }, now = new Date()) {
+export function newToken(
+  input: { label: string; scope: Scope; origin?: string; labelFilter?: Record<string, string> },
+  now = new Date(),
+) {
   const token = generateToken();
   const record: TokenRecord = {
     id: randomUUID(),
@@ -38,6 +43,7 @@ export function newToken(input: { label: string; scope: Scope; origin?: string }
     hash: hashToken(token),
     createdAt: now.toISOString(),
     ...(input.origin ? { origin: input.origin } : {}),
+    ...(input.labelFilter && Object.keys(input.labelFilter).length ? { labelFilter: input.labelFilter } : {}),
   };
   return { token, record };
 }

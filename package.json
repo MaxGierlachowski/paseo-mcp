@@ -1,6 +1,6 @@
 {
   "name": "paseo-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server that lets an orchestrator agent list, read, start and steer the coding agents of a local Paseo daemon, over stdio or as a Paseo plugin over Streamable HTTP.",
   "license": "Apache-2.0",
   "author": "Max Gierlachowski",

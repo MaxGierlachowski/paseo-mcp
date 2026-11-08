@@ -18,5 +18,9 @@
   "defaultAccount": "work",
   "accountEnvVar": "CLAUDE_CONFIG_DIR",
   "originLabel": "hermes",
-  "readOnly": false
+  "readOnly": false,
+  "events": {
+    "enabled": true,
+    "previewChars": 0
+  }
 }
