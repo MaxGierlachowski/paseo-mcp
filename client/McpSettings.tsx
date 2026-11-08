@@ -19,6 +19,7 @@ import {
 import { createTokenRpc, statusRpc, type McpStatus } from "../shared/rpc.js";
 import { Block, CodeBlock, SmallButton } from "./parts.js";
 import { StdioSection } from "./StdioSection.js";
+import { EventsSection } from "./EventsSection.js";
 import { DEFAULT_BIND, mcpSettings, type McpSettings, type StoredToken } from "../shared/settings.js";
 import {
   TOKEN_PLACEHOLDER,
@@ -29,6 +30,7 @@ import {
   day,
   hermesSnippet,
   isLoopback,
+  parseLabels,
   plural,
 } from "./format.js";
 
@@ -132,9 +134,11 @@ export function makeMcpSettings(rpc: Rpc) {
       const label = take("tokenLabel")?.trim();
       if (!label) return toast.error("Give the token a label, e.g. Hermes");
       const origin = take("tokenOrigin")?.trim() || undefined;
+      const labelFilter = parseLabels(take("tokenFilter") ?? "");
+      if (labelFilter === null) return toast.error("Label filter: key=value, separated by commas");
       setBusy(true);
       try {
-        const { token, record } = await rpc(createTokenRpc, { label, scope: newScope, origin });
+        const { token, record } = await rpc(createTokenRpc, { label, scope: newScope, origin, labelFilter });
         const ok = await update((next) => {
           next.tokens.push(record);
         });
@@ -142,6 +146,7 @@ export function makeMcpSettings(rpc: Rpc) {
           setCreated({ token, label });
           clearInput("tokenLabel");
           clearInput("tokenOrigin");
+          clearInput("tokenFilter");
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : String(error));
@@ -263,7 +268,7 @@ export function makeMcpSettings(rpc: Rpc) {
 
         <SettingsSection
           title="Access tokens"
-          info="A client sends its token as Authorization: Bearer <token>. Read-only tokens see the five list/read tools, full tokens all ten. Tokens are stored only as a SHA-256 hash; revoking one closes its open sessions."
+          info="A client sends its token as Authorization: Bearer <token>. Read-only tokens see the list/read tools and events, full tokens also start and steer agents. Tokens are stored only as a SHA-256 hash; revoking one closes its open sessions."
         >
           <SettingsCard>
             {created ? (
@@ -289,6 +294,9 @@ export function makeMcpSettings(rpc: Rpc) {
                 `last used ${ago(status?.lastUsed[token.id])}`,
                 sessions ? plural(sessions, "open session") : null,
                 token.scope === "full" ? `origin=${token.origin || values.originLabel || token.label}` : null,
+                token.labelFilter
+                  ? `sees only ${Object.entries(token.labelFilter).map(([k, v]) => `${k}=${v}`).join(" ")}`
+                  : null,
               ]
                 .filter(Boolean)
                 .join(" · ");
@@ -348,6 +356,14 @@ export function makeMcpSettings(rpc: Rpc) {
               onChangeText={field("tokenOrigin")}
               disabled={busy}
             />
+            <SettingsInput
+              ref={ref("tokenFilter")}
+              label="Only agents with labels"
+              hint="Optional, e.g. origin=hermes: this token's events and resources cover only those agents."
+              placeholder="origin=hermes"
+              onChangeText={field("tokenFilter")}
+              disabled={busy}
+            />
             <SettingsAction
               label="Create token"
               actionLabel={busy ? "Creating…" : "Create"}
@@ -387,6 +403,8 @@ export function makeMcpSettings(rpc: Rpc) {
             </Block>
           </SettingsCard>
         </SettingsSection>
+
+        <EventsSection rpc={rpc} colors={colors} values={values} saving={state.saving} update={update} />
 
         <SettingsSection
           title="Agents"

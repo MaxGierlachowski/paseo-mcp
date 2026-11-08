@@ -55,3 +55,14 @@ export function day(iso: string): string {
 export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
+
+/** "a=1, b=2" → {a:"1", b:"2"}; "" → {}; null when malformed. */
+export function parseLabels(text: string): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const part of text.split(",").map((p) => p.trim()).filter(Boolean)) {
+    const i = part.indexOf("=");
+    if (i <= 0 || i === part.length - 1) return null;
+    out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}

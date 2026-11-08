@@ -31,12 +31,22 @@ const ConfigSchema = z.object({
   originLabel: z.string().default("hermes"),
   /** true = only list/read tools are exposed. */
   readOnly: z.boolean().default(false),
+  /** Agent events: paseo_wait_for_events and the paseo://agents resources. */
+  events: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** >0: turn_ended events carry this many characters of the last agent message. */
+      previewChars: z.number().int().min(0).max(2000).default(0),
+      bufferSize: z.number().int().min(10).max(100_000).default(1000),
+      ttlMinutes: z.number().int().min(1).max(7 * 24 * 60).default(60),
+    })
+    .default({ enabled: true, previewChars: 0, bufferSize: 1000, ttlMinutes: 60 }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 
 /** What the tools read: everything but how to reach the daemon. */
-export type ToolConfig = Omit<Config, "daemonUrl" | "password">;
+export type ToolConfig = Omit<Config, "daemonUrl" | "password" | "events">;
 
 export function expandHome(p: string): string {
   if (p === "~") return homedir();

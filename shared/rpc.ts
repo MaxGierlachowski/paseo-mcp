@@ -1,7 +1,7 @@
 // Contracts between the settings screen and the daemon side.
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-import { TokenRecordSchema } from "./settings.js";
+import { TokenRecordSchema, WebhookSchema } from "./settings.js";
 
 export const StatusSchema = z.object({
   enabled: z.boolean(),
@@ -34,6 +34,7 @@ export const createTokenRpc = defineRpc({
     label: z.string().trim().min(1).max(60),
     scope: z.enum(["read", "full"]),
     origin: z.string().trim().max(60).optional(),
+    labelFilter: z.record(z.string(), z.string()).optional(),
   }),
   output: z.object({ token: z.string(), record: TokenRecordSchema }),
 });
@@ -92,3 +93,78 @@ export const stdioStatusRpc = defineRpc({ name: "mcp.stdio.status", input: z.obj
 
 /** Starts the stdio server like a client would and calls tools/list and paseo_list_agents. */
 export const probeRpc = defineRpc({ name: "mcp.stdio.probe", input: z.object({}), output: ProbeSchema });
+
+// ---------------------------------------------------------------- webhooks
+
+const WebhookInputSchema = WebhookSchema.pick({
+  label: true,
+  url: true,
+  types: true,
+  labels: true,
+  onlyNeedsAttention: true,
+  batchMs: true,
+});
+
+/**
+ * Creates a webhook: the daemon checks the URL, makes an id and a secret and keeps the secret. The
+ * screen saves the returned record into the settings and shows the secret once.
+ */
+export const createWebhookRpc = defineRpc({
+  name: "mcp.webhooks.create",
+  input: WebhookInputSchema,
+  output: z.object({ secret: z.string(), record: WebhookSchema }),
+});
+
+/** A new secret for an existing webhook; the old one stops working at once. */
+export const rotateWebhookSecretRpc = defineRpc({
+  name: "mcp.webhooks.rotate",
+  input: z.object({ id: z.string().min(1) }),
+  output: z.object({ secret: z.string(), secretHint: z.string() }),
+});
+
+const DeliverySchema = z.object({
+  id: z.string(),
+  endpointId: z.string(),
+  at: z.string(),
+  events: z.number(),
+  test: z.boolean(),
+  status: z.enum(["delivered", "failed", "retrying"]),
+  attempts: z.number(),
+  httpStatus: z.number().nullable(),
+  error: z.string().nullable(),
+  ms: z.number(),
+});
+
+export type DeliveryView = z.infer<typeof DeliverySchema>;
+
+export const testWebhookRpc = defineRpc({
+  name: "mcp.webhooks.test",
+  input: z.object({ id: z.string().min(1) }),
+  output: DeliverySchema,
+});
+
+export const resumeWebhookRpc = defineRpc({
+  name: "mcp.webhooks.resume",
+  input: z.object({ id: z.string().min(1) }),
+  output: z.object({ id: z.string() }),
+});
+
+export const WebhookStatusSchema = z.object({
+  paused: z.boolean(),
+  consecutiveFailures: z.number(),
+  dropped: z.number(),
+  hasSecret: z.boolean(),
+  deliveries: z.array(DeliverySchema),
+});
+
+export type WebhookStatusView = z.infer<typeof WebhookStatusSchema>;
+
+export const webhookStatusRpc = defineRpc({
+  name: "mcp.webhooks.status",
+  input: z.object({}),
+  output: z.object({
+    webhooks: z.record(z.string(), WebhookStatusSchema),
+    /** Current event cursor and how many events are retained, for the screen. */
+    events: z.object({ cursor: z.string(), sources: z.array(z.string()) }),
+  }),
+});
