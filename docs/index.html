@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paseo MCP</title>
+  <meta name="description" content="An MCP server that lets an orchestrator agent like Hermes or Claude Code list, read, start and steer the coding agents in your local Paseo.">
+  <meta property="og:title" content="Paseo MCP">
+  <meta property="og:description" content="Let an orchestrator agent see and steer your Paseo agents.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23D97757' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='12' rx='2'/%3E%3Cpath d='m7 9 2 2-2 2'/%3E%3Cpath d='M12 13h4'/%3E%3Cpath d='M8 20h8'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #fbfaf8;
+      --surface: #ffffff;
+      --surface-2: #f3f1ed;
+      --border: #e6e2db;
+      --fg: #1c1b19;
+      --muted: #6b675f;
+      --accent: #d97757;
+      --accent-soft: #f7e6df;
+      --ok: #2f7a4f;
+      --code-bg: #1f1e1c;
+      --code-fg: #f1ede6;
+      --radius: 14px;
+      --shadow: 0 1px 2px rgba(28, 27, 25, .04), 0 8px 24px rgba(28, 27, 25, .06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161514;
+        --surface: #1f1e1c;
+        --surface-2: #272523;
+        --border: #34312e;
+        --fg: #eeeae3;
+        --muted: #a29d94;
+        --accent: #e08a6c;
+        --accent-soft: #3a2a23;
+        --ok: #6cc08f;
+        --code-bg: #0f0f0e;
+        --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    :not(pre) > code {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .1em .35em;
+      font-size: .88em;
+    }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+
+    /* Nav */
+    nav { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--border); }
+    nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; color: var(--fg); }
+    .brand:hover { text-decoration: none; }
+    .brand-mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent-soft); display: grid; place-items: center; }
+    nav .links { display: flex; gap: 22px; font-size: 14px; }
+    nav .links a { color: var(--muted); }
+    nav .links a:hover { color: var(--fg); text-decoration: none; }
+    @media (max-width: 640px) { nav .links a:not(.gh) { display: none; } h1 { font-size: 34px; } }
+
+    /* Hero */
+    .hero { padding: 88px 24px 64px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 56px; align-items: center; }
+    @media (max-width: 880px) { .hero { grid-template-columns: 1fr; padding-top: 56px; } }
+    /* Grid children may shrink below their content (long code lines scroll instead). */
+    .hero > *, .two > *, .grid > *, .flow > * { min-width: 0; }
+    .eyebrow { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    h1 { font-size: clamp(36px, 5.4vw, 56px); line-height: 1.05; letter-spacing: -.025em; margin: 18px 0 16px; }
+    h1 em { font-style: normal; color: var(--accent); }
+    .lead { font-size: 19px; color: var(--muted); max-width: 34em; margin: 0 0 28px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 10px; font-weight: 600; font-size: 15px; border: 1px solid var(--border); color: var(--fg); background: var(--surface); }
+    .btn:hover { text-decoration: none; border-color: var(--muted); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.primary:hover { filter: brightness(1.05); }
+
+    /* Mock header menu */
+    .mock { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+    .mock-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+    .lights { display: flex; gap: 6px; }
+    .lights i { width: 11px; height: 11px; border-radius: 50%; background: var(--border); display: block; }
+    .mock-title { font-size: 13px; font-weight: 600; color: var(--muted); }
+    .mock-body { padding: 16px; display: grid; gap: 10px; font-size: 14px; }
+    .msg { padding: 10px 12px; border-radius: 10px; max-width: 92%; }
+    .msg.you { background: var(--accent); color: #fff; justify-self: end; }
+    .msg.bot { background: var(--surface-2); }
+    .tool { display: flex; align-items: center; gap: 8px; font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+    .tool b { color: var(--accent); font-weight: 600; }
+    .tool span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tool .st { margin-left: auto; color: var(--ok); flex: none; }
+
+    /* Sections */
+    section { padding: 64px 0; border-top: 1px solid var(--border); }
+    h2 { font-size: 30px; letter-spacing: -.02em; margin: 0 0 10px; }
+    .sub { color: var(--muted); margin: 0 0 36px; max-width: 42em; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    @media (max-width: 880px) { .grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
+    .card h3 { margin: 12px 0 6px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+    .icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+
+    /* Steps */
+    .steps { counter-reset: step; display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+    .steps li { counter-increment: step; position: relative; padding: 18px 20px 18px 64px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+    .steps li::before { content: counter(step); position: absolute; left: 18px; top: 16px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; background: var(--accent-soft); color: var(--accent); }
+    .steps strong { display: block; margin-bottom: 2px; }
+    .steps span { color: var(--muted); font-size: 15px; }
+
+    pre:has(.copy) { padding-right: 92px; }
+    pre:has(.copy) code { white-space: pre-wrap; word-break: break-all; }
+    .note code { overflow-wrap: anywhere; }
+    pre { position: relative; background: var(--code-bg); color: var(--code-fg); border-radius: 12px; padding: 18px 20px; overflow-x: auto; font-size: 14px; line-height: 1.55; margin: 0; }
+    pre .c { color: #8f8a80; }
+    .copy { position: absolute; top: 10px; right: 10px; font: 600 12px/1 inherit; font-family: inherit; color: var(--code-fg); background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14); border-radius: 7px; padding: 6px 10px; cursor: pointer; }
+    .copy:hover { background: rgba(255,255,255,.16); }
+
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+    @media (max-width: 880px) { .two { grid-template-columns: 1fr; } }
+    .req { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+    .req li { display: flex; gap: 10px; align-items: flex-start; }
+    .req svg { flex: none; margin-top: 4px; color: var(--ok); }
+
+    /* Flow */
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    @media (max-width: 880px) { .flow { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 520px) { .flow { grid-template-columns: 1fr; } }
+    .flow .card { position: relative; }
+    .flow .n { font: 700 12px/1 ui-monospace, Menlo, monospace; color: var(--accent); letter-spacing: .08em; }
+
+    .table-wrap { overflow-x: auto; border-radius: var(--radius); }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-size: 15px; }
+    th, td { text-align: left; padding: 13px 18px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { background: var(--surface-2); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    tr:last-child td { border-bottom: 0; }
+
+    .note { border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 10px 10px 0; padding: 14px 18px; color: var(--muted); font-size: 15px; margin-top: 18px; }
+    .note strong { color: var(--fg); }
+
+    footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+    footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+      .arch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 26px; }
+    .arch .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; font-weight: 600; font-size: 15px; }
+    .arch .box small { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
+    .arch .box.hl { border-color: var(--accent); background: var(--accent-soft); }
+    .arch .arrow { color: var(--muted); font-size: 13px; text-align: center; line-height: 1.2; }
+    .arch .arrow::after { content: "→"; display: block; font-size: 20px; color: var(--accent); }
+    td code { white-space: nowrap; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#">
+      <span class="brand-mark">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="m7 9 2 2-2 2"/><path d="M12 13h4"/><path d="M8 20h8"/></svg>
+      </span>
+      Paseo MCP
+    </a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#how">How it works</a>
+      <a href="#tools">Tools</a>
+      <a href="#safety">Safety</a>
+      <a class="gh" href="https://github.com/MaxGierlachowski/paseo-mcp">GitHub →</a>
+    </div>
+  </div>
+</nav>
+
+<header class="wrap hero">
+  <div>
+    <span class="eyebrow"><span class="dot"></span> An MCP server for Paseo 0.15+</span>
+    <h1>One agent hands out the work.<br><em>Paseo</em> runs it.</h1>
+    <p class="lead">Give Hermes, Claude Code or any MCP client access to the coding agents in your local Paseo: list them, read what they did, start new ones, send follow-ups and wait for results. Every agent stays a normal Paseo chat you can open and take over.</p>
+    <div class="actions">
+      <a class="btn primary" href="#install">Install the server</a>
+      <a class="btn" href="https://github.com/MaxGierlachowski/paseo-mcp">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+        View source
+      </a>
+    </div>
+  </div>
+
+  <div class="mock" aria-label="Illustration of an orchestrator handing a task to a Paseo agent">
+    <div class="mock-bar">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <span class="mock-title">Orchestrator</span>
+    </div>
+    <div class="mock-body">
+      <div class="msg you">Fix the failing checkout test in the shop repo and tell me when it's green.</div>
+      <div class="tool"><b>paseo_create_agent</b><span>cwd ~/Repositories/shop · worktree fix/checkout-test</span><span class="st">started</span></div>
+      <div class="tool"><b>paseo_wait_for_agent</b><span>timeout 300 s</span><span class="st">idle</span></div>
+      <div class="tool"><b>paseo_read_timeline</b><span>last 40 entries</span><span class="st">read</span></div>
+      <div class="msg bot">Done. The agent fixed a stale fixture, all 214 tests pass, and the branch is pushed. The chat is in Paseo if you want to look.</div>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Why this server</h2>
+    <p class="sub">Paseo is built for a person in front of the app. When an assistant should hand work to coding agents, for example a bug report from your inbox or a task split across repositories, it needs a way into Paseo. This server is that way in, over the Model Context Protocol.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h12"/></svg></div>
+        <h3>Overview</h3>
+        <p>Every agent with status, account and whether it needs you: finished, failed or waiting for a permission.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+        <h3>Readable transcripts</h3>
+        <p>The tail of a chat as a compact transcript: messages, tool calls, todos and errors.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></div>
+        <h3>Start agents</h3>
+        <p>New Claude Code chats with a prompt, model, thinking level, permission mode, account and an optional worktree branch.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></svg></div>
+        <h3>Steer running agents</h3>
+        <p>Send follow-ups. For a running turn, choose <i>steer</i> to add the message or <i>interrupt</i> to restart with it.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>Wait for results</h3>
+        <p>Block until a turn ends, fails or needs a permission, and get the agent's final message back.</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>Guard rails</h3>
+        <p>Agents start only inside allowed folders, carry an <code>origin</code> label, and a read-only mode hides every tool that changes something.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap two">
+    <div>
+      <h2>Install</h2>
+      <p class="sub" style="margin-bottom:22px">Clone and install. <code>npm install</code> also builds the server into <code>dist/</code>.</p>
+      <pre><button class="copy" data-copy="git clone https://github.com/MaxGierlachowski/paseo-mcp.git
+cd paseo-mcp && npm install">Copy</button><code>git clone https://github.com/MaxGierlachowski/paseo-mcp.git
+cd paseo-mcp && npm install</code></pre>
+      <p class="note">Then copy <code>config.example.json</code> to <code>~/.config/paseo-mcp/config.json</code>, set <code>allowedRoots</code> to the folders agents may work in, and connect your client.</p>
+    </div>
+    <div>
+      <h2 style="font-size:20px;margin-top:6px">You need</h2>
+      <ul class="req">
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><a href="https://paseo.sh">Paseo</a> 0.15 or newer, running (desktop app or <code>paseo daemon start</code>)</span></li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Node 22 or newer</span></li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>An MCP client such as <a href="https://hermes-agent.nousresearch.com">Hermes</a> or <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a></span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="connect">
+  <div class="wrap two">
+    <div>
+      <h2>Connect Hermes</h2>
+      <p class="sub" style="margin-bottom:22px">In <code>~/.hermes/config.yaml</code>. Hermes only passes <code>PATH</code> and <code>HOME</code> to MCP servers, so the config path goes under <code>env</code>.</p>
+      <pre><code>mcp_servers:
+  paseo:
+    command: "node"
+    args: ["/path/to/paseo-mcp/dist/index.js"]
+    env:
+      PASEO_MCP_CONFIG: "/Users/you/.config/paseo-mcp/config.json"
+    timeout: 300   <span class="c"># wait_for_agent can block</span>
+    connect_timeout: 30</code></pre>
+    </div>
+    <div>
+      <h2>Connect Claude Code</h2>
+      <p class="sub" style="margin-bottom:22px">One command, then the tools show up in every Claude Code session.</p>
+      <pre><button class="copy" data-copy="claude mcp add paseo -- node /path/to/paseo-mcp/dist/index.js">Copy</button><code>claude mcp add paseo -- node /path/to/paseo-mcp/dist/index.js</code></pre>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="sub">A thin bridge. The server keeps no state of its own; every tool maps onto the Paseo daemon's agent API.</p>
+    <div class="arch" aria-label="Architecture">
+      <div class="box">Orchestrator<small>Hermes, Claude Code</small></div>
+      <div class="arrow">MCP<br>stdio</div>
+      <div class="box hl">paseo-mcp<small>this server</small></div>
+      <div class="arrow">WebSocket<br>@getpaseo/client</div>
+      <div class="box">Paseo daemon<small>127.0.0.1:6767</small></div>
+      <div class="arrow">runs</div>
+      <div class="box">Claude Code agents<small>visible in the Paseo app</small></div>
+    </div>
+    <div class="flow">
+      <div class="card"><span class="n">01</span><h3>Client starts the server</h3><p>As a child process; both talk MCP over stdin and stdout.</p></div>
+      <div class="card"><span class="n">02</span><h3>Server connects to Paseo</h3><p>On the first tool call, with the official client library. It reconnects when the daemon restarts.</p></div>
+      <div class="card"><span class="n">03</span><h3>Checks before a start</h3><p>The folder is resolved, symlinks included, and must lie inside <code>allowedRoots</code>. Labels and account are attached.</p></div>
+      <div class="card"><span class="n">04</span><h3>A normal Paseo chat</h3><p>The agent shows up in the app and on your phone. You can read along or take over at any time.</p></div>
+    </div>
+    <p class="note"><strong>Accounts:</strong> starting an agent with an account sets <code>accountEnvVar</code> (default <code>CLAUDE_CONFIG_DIR</code>) to that login's folder and adds the label <code>account=&lt;name&gt;</code>. Using <a href="https://maxgierlachowski.github.io/paseo-multi-account/">Claude accounts for Paseo</a>? Let the plugin stay in charge and set <code>accountEnvVar</code> to a name Claude Code ignores, such as <code>PASEO_CLAUDE_ACCOUNT</code>.</p>
+  </div>
+</section>
+
+<section id="tools">
+  <div class="wrap">
+    <h2>Tools</h2>
+    <p class="sub">Agent ids can be passed in full or as a unique prefix, like the short ids <code>paseo ls</code> shows. In read-only mode only the first five exist.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>paseo_list_agents</code></td><td>Agents with status, account and attention flag. Filter by status, labels, archived</td></tr>
+        <tr><td><code>paseo_get_agent</code></td><td>One agent's state, including pending permission requests</td></tr>
+        <tr><td><code>paseo_read_timeline</code></td><td>The last N timeline entries as a compact transcript</td></tr>
+        <tr><td><code>paseo_list_accounts</code></td><td>The Claude accounts from your config</td></tr>
+        <tr><td><code>paseo_list_models</code></td><td>Models of a provider as <code>claude/&lt;model-id&gt;</code></td></tr>
+        <tr><td><code>paseo_create_agent</code></td><td>Start a new agent inside <code>allowedRoots</code></td></tr>
+        <tr><td><code>paseo_send_message</code></td><td>Send a follow-up; <code>steer</code> or <code>interrupt</code> while it runs</td></tr>
+        <tr><td><code>paseo_wait_for_agent</code></td><td>Wait until the turn is done, failed, needs a permission, or times out</td></tr>
+        <tr><td><code>paseo_respond_permission</code></td><td>Allow or deny a permission request</td></tr>
+        <tr><td><code>paseo_archive_agent</code></td><td>Archive a finished agent</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="safety">
+  <div class="wrap two">
+    <div>
+      <h2>Good to know</h2>
+      <p class="note" style="margin-top:0"><strong>Mail and web text is untrusted input.</strong> Have your orchestrator ask you before it starts an agent from such content, and never pass it through unfiltered as a prompt.</p>
+      <p class="note"><strong>Agent output is data.</strong> Transcripts and final messages come back with a note telling the orchestrator not to follow instructions inside them.</p>
+      <p class="note"><strong>Permissions stay with you.</strong> Only let the orchestrator allow a permission request after you confirmed, unless it is clearly read-only.</p>
+      <p class="note"><strong>Start by watching.</strong> <code>readOnly: true</code> or <code>PASEO_MCP_READONLY=1</code> exposes only the list and read tools.</p>
+    </div>
+    <div>
+      <h2>Update or test</h2>
+      <pre><code><span class="c"># pull the latest version</span>
+git pull && npm install
+
+<span class="c"># call tools like an MCP client would</span>
+npm run smoke -- paseo_list_accounts \
+  'paseo_list_agents={"limit":5}'</code></pre>
+      <p class="note">Your MCP client picks up a new build the next time it starts the server.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Apache 2.0 · Built on <a href="https://github.com/getpaseo/paseo">Paseo</a>'s client library, see <a href="https://github.com/MaxGierlachowski/paseo-mcp/blob/main/NOTICE">NOTICE</a></span>
+    <span>Not affiliated with Paseo or Anthropic · <a href="https://github.com/MaxGierlachowski/paseo-mcp">GitHub</a></span>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll(".copy").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy);
+        button.textContent = "Copied";
+      } catch {
+        button.textContent = "Select and copy";
+      }
+      setTimeout(() => (button.textContent = "Copy"), 1600);
+    });
+  });
+</script>
+</body>
+</html>
