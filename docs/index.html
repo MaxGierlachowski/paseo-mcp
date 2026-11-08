@@ -155,6 +155,11 @@
     footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
     footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
       .arch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 26px; }
+    .shot { display: block; width: 100%; max-width: 560px; margin: 36px auto 0; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .shots { display: flex; gap: 24px; justify-content: center; align-items: flex-start; }
+    .shots .shot { margin-left: 0; margin-right: 0; min-width: 0; }
+    .shots .shot.phone { max-width: 220px; }
+    @media (max-width: 640px) { .shots .shot.phone { display: none; } }
     .arch .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; font-weight: 600; font-size: 15px; }
     .arch .box small { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
     .arch .box.hl { border-color: var(--accent); background: var(--accent-soft); }
@@ -176,6 +181,7 @@
     <div class="links">
       <a href="#features">Features</a>
       <a href="#install">Install</a>
+      <a href="#plugin">Plugin mode</a>
       <a href="#how">How it works</a>
       <a href="#tools">Tools</a>
       <a href="#safety">Safety</a>
@@ -186,7 +192,7 @@
 
 <header class="wrap hero">
   <div>
-    <span class="eyebrow"><span class="dot"></span> An MCP server for Paseo 0.15+</span>
+    <span class="eyebrow"><span class="dot"></span> An MCP server for Paseo 0.15+ · stdio or Paseo plugin</span>
     <h1>One agent hands out the work.<br><em>Paseo</em> runs it.</h1>
     <p class="lead">Give Hermes, Claude Code or any MCP client access to the coding agents in your local Paseo: list them, read what they did, start new ones, send follow-ups and wait for results. Every agent stays a normal Paseo chat you can open and take over.</p>
     <div class="actions">
@@ -260,7 +266,7 @@
       <pre><button class="copy" data-copy="git clone https://github.com/MaxGierlachowski/paseo-mcp.git
 cd paseo-mcp && npm install">Copy</button><code>git clone https://github.com/MaxGierlachowski/paseo-mcp.git
 cd paseo-mcp && npm install</code></pre>
-      <p class="note">Then copy <code>config.example.json</code> to <code>~/.config/paseo-mcp/config.json</code>, set <code>allowedRoots</code> to the folders agents may work in, and connect your client.</p>
+      <p class="note">Then copy <code>config.example.json</code> to <code>~/.config/paseo-mcp/config.json</code>, set <code>allowedRoots</code> to the folders agents may work in, and connect your client. With the <a href="#plugin">plugin</a> installed you can skip the clone: it keeps a launcher at <code>~/.local/bin/paseo-mcp</code>.</p>
     </div>
     <div>
       <h2 style="font-size:20px;margin-top:6px">You need</h2>
@@ -290,7 +296,68 @@ cd paseo-mcp && npm install</code></pre>
     <div>
       <h2>Connect Claude Code</h2>
       <p class="sub" style="margin-bottom:22px">One command, then the tools show up in every Claude Code session.</p>
-      <pre><button class="copy" data-copy="claude mcp add paseo -- node /path/to/paseo-mcp/dist/index.js">Copy</button><code>claude mcp add paseo -- node /path/to/paseo-mcp/dist/index.js</code></pre>
+      <pre><button class="copy" data-copy="claude mcp add paseo-agents -- node /path/to/paseo-mcp/dist/index.js">Copy</button><code>claude mcp add paseo-agents -- node /path/to/paseo-mcp/dist/index.js</code></pre>
+      <p class="note">Named <code>paseo-agents</code> because agents running inside Paseo already have a server called <code>paseo</code>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="plugin">
+  <div class="wrap">
+    <h2>Plugin mode: MCP over HTTP from inside Paseo</h2>
+    <p class="sub">Installed as a Paseo plugin, the same ten tools are served over Streamable HTTP by the daemon itself. No separate process, no config file: everything is set on the plugin's settings screen, and every client gets its own token. stdio clients get a stable launcher, a connection test and ready-made configs from the same screen.</p>
+    <div class="two">
+      <div>
+        <ol class="steps">
+          <li><strong>Install the plugin</strong><span>Paseo clones it, runs <code>npm ci</code> and loads it. The HTTP server stays off.</span></li>
+          <li><strong>Open the settings</strong><span>⌘K → <i>MCP server</i>, or Settings → Plugins → paseo-mcp. Add your allowed roots.</span></li>
+          <li><strong>Create a token per client</strong><span>Label and scope: <i>read</i> for the five list/read tools, <i>full</i> for all ten. It is shown once.</span></li>
+          <li><strong>Turn the server on and connect</strong><span>Copy the ready snippet for Hermes or Claude Code (CLI or <code>.mcp.json</code>) from the same screen.</span></li>
+        </ol>
+      </div>
+      <div>
+        <pre><button class="copy" data-copy="paseo plugin install github:MaxGierlachowski/paseo-mcp">Copy</button><code>paseo plugin install github:MaxGierlachowski/paseo-mcp</code></pre>
+        <p class="note">Hermes, in <code>~/.hermes/config.yaml</code>:</p>
+        <pre style="margin-top:12px"><code>mcp_servers:
+  paseo:
+    url: "http://127.0.0.1:6790/mcp"
+    headers:
+      Authorization: "Bearer &lt;token&gt;"
+    timeout: 300</code></pre>
+        <p class="note">Claude Code:</p>
+        <pre style="margin-top:12px"><button class="copy" data-copy='claude mcp add --transport http paseo-agents http://127.0.0.1:6790/mcp --header "Authorization: Bearer <token>"'>Copy</button><code>claude mcp add --transport http paseo-agents http://127.0.0.1:6790/mcp --header "Authorization: Bearer &lt;token&gt;"</code></pre>
+      </div>
+    </div>
+    <div class="shots">
+      <img class="shot" src="plugin-settings.png" alt="The MCP server settings screen in Paseo: HTTP server switch and status, port and bind address, access tokens with scope and last use, HTTP client configs." loading="lazy">
+      <img class="shot phone" src="plugin-settings-phone.png" alt="The same screen at phone width." loading="lazy">
+    </div>
+    <div class="grid" style="margin-top:28px">
+      <div class="card"><h3>Off until you turn it on</h3><p>Then it binds to <code>127.0.0.1:6790</code>. Any other bind address must be typed in and comes with a warning.</p></div>
+      <div class="card"><h3>A token on every request</h3><p>Also from localhost. Stored only as a SHA-256 hash and compared in constant time. Revoking one ends its open sessions.</p></div>
+      <div class="card"><h3>Scopes per client</h3><p>A read token never sees a tool that changes something. The global read-only switch applies on top.</p></div>
+      <div class="card"><h3>No DNS rebinding</h3><p>Host and Origin headers must point at the server itself, and bodies are capped at 1 MiB.</p></div>
+      <div class="card"><h3>Same guard rails</h3><p><code>allowedRoots</code> is checked on the daemon side, agents get an <code>origin</code> label per token, and permissions are never allowed on their own.</p></div>
+      <div class="card"><h3>stdio keeps working</h3><p><code>node dist/index.js</code> with <code>~/.config/paseo-mcp/config.json</code> behaves as before, and signs in with Paseo's local credential when the daemon has a password.</p></div>
+    </div>
+    <h2 style="font-size:22px;margin-top:48px">stdio clients through the plugin</h2>
+    <p class="sub" style="margin-bottom:22px">Clients that start the server as a child process need neither the HTTP server nor a token.</p>
+    <div class="two">
+      <div>
+        <ul class="req">
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>A stable command.</strong> <code>~/.local/bin/paseo-mcp</code> is rewritten on every load and follows plugin updates. A file the plugin did not write is never touched.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>Test connection.</strong> Starts the server exactly like a client, lists the tools and counts the agents.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>Status at a glance.</strong> Config file, allowed roots, accounts and how the server signs in; the credential stays masked.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>Copyable configs</strong> for Hermes, Claude Code (<code>.mcp.json</code> and CLI) and any stdio client.</span></li>
+        </ul>
+        <pre style="margin-top:22px"><code>mcp_servers:
+  paseo:
+    command: "/Users/you/.local/bin/paseo-mcp"
+    env:
+      PASEO_MCP_CONFIG: "/Users/you/.config/paseo-mcp/config.json"
+    timeout: 300</code></pre>
+      </div>
+      <div><img class="shot" style="margin-top:0" src="plugin-stdio.png" alt="The stdio section: command, Test button, config file and sign-in status, Hermes config." loading="lazy"></div>
     </div>
   </div>
 </section>
@@ -298,7 +365,7 @@ cd paseo-mcp && npm install</code></pre>
 <section id="how">
   <div class="wrap">
     <h2>How it works</h2>
-    <p class="sub">A thin bridge. The server keeps no state of its own; every tool maps onto the Paseo daemon's agent API.</p>
+    <p class="sub">A thin bridge. The server keeps no state of its own; every tool maps onto the Paseo daemon's agent API. Below is the stdio mode; in plugin mode the client talks HTTP to the plugin inside the daemon, which reaches the daemon over loopback with its local credential.</p>
     <div class="arch" aria-label="Architecture">
       <div class="box">Orchestrator<small>Hermes, Claude Code</small></div>
       <div class="arrow">MCP<br>stdio</div>

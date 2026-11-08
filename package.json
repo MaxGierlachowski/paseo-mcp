@@ -1,7 +1,7 @@
 {
   "name": "paseo-mcp",
-  "version": "0.1.0",
-  "description": "MCP server that lets an orchestrator agent list, read, start and steer the coding agents of a local Paseo daemon.",
+  "version": "0.2.0",
+  "description": "MCP server that lets an orchestrator agent list, read, start and steer the coding agents of a local Paseo daemon, over stdio or as a Paseo plugin over Streamable HTTP.",
   "license": "Apache-2.0",
   "author": "Max Gierlachowski",
   "repository": {
@@ -14,7 +14,9 @@
     "mcp-server",
     "model-context-protocol",
     "claude-code",
-    "agents"
+    "agents",
+    "paseo-plugin",
+    "streamable-http"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -23,8 +25,10 @@
   },
   "files": [
     "dist/",
+    "bin/",
     "config.example.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE"
   ],
@@ -32,18 +36,23 @@
     "build": "tsc",
     "prepare": "tsc",
     "start": "node dist/index.js",
-    "smoke": "node smoke.mjs"
+    "smoke": "node smoke.mjs",
+    "typecheck": "tsc -p tsconfig.plugin.json",
+    "test": "tsc && node --test 'test/*.test.mjs'"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "@getpaseo/client": "^0.15.0",
+    "@getpaseo/client": "^0.15.3",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@getpaseo/plugin": "^0.15.3",
     "@types/node": "^26.6.6",
+    "@types/react": "^19.1.17",
+    "react-native": "^0.81.5",
     "typescript": "^7.0.2"
   }
 }

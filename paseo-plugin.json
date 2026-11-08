@@ -1,0 +1,30 @@
+{
+  "id": "paseo-mcp",
+  "name": "MCP server",
+  "description": "Lets Hermes, Claude Code or any MCP client see and steer your Paseo agents: over Streamable HTTP with scoped tokens, or as a stdio server with a stable launcher.",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.15.0"
+  },
+  "build": [
+    [
+      "npm",
+      "ci",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund"
+    ],
+    [
+      "npm",
+      "run",
+      "build"
+    ],
+    [
+      "npm",
+      "prune",
+      "--omit=dev",
+      "--no-audit",
+      "--no-fund"
+    ]
+  ]
+}

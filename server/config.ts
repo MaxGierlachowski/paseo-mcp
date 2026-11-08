@@ -35,6 +35,9 @@ const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 
+/** What the tools read: everything but how to reach the daemon. */
+export type ToolConfig = Omit<Config, "daemonUrl" | "password">;
+
 export function expandHome(p: string): string {
   if (p === "~") return homedir();
   if (p.startsWith("~/")) return join(homedir(), p.slice(2));
@@ -60,13 +63,44 @@ export function loadConfig(): Config {
   return cfg;
 }
 
+/** Paseo's home directory; the daemon keeps its loopback credential there. */
+export function paseoHome(): string {
+  return expandHome(process.env.PASEO_HOME?.trim() || "~/.paseo");
+}
+
+/**
+ * Reads the token the local daemon writes to <PASEO_HOME>/local-credential, the same one the
+ * paseo CLI uses. Only offered to loopback daemons; never logged.
+ */
+export function readLocalCredential(daemonUrl: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(daemonUrl).hostname;
+  } catch {
+    return undefined;
+  }
+  if (!["127.0.0.1", "localhost", "[::1]", "::1"].includes(host)) return undefined;
+  try {
+    const token = readFileSync(join(paseoHome(), "local-credential"), "utf8").trim();
+    return token || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Resolves cwd and checks it lies inside an allowed root (symlinks resolved). */
-export function checkCwd(cfg: Config, cwd: string): string {
+export function checkCwd(cfg: Pick<Config, "allowedRoots">, cwd: string): string {
+  if (cfg.allowedRoots.length === 0) {
+    throw new Error("No allowedRoots configured, so no agent can be started");
+  }
   const abs = resolve(expandHome(cwd));
   if (!existsSync(abs)) throw new Error(`cwd does not exist: ${abs}`);
   const real = realpathSync(abs);
   const ok = cfg.allowedRoots.some((root) => {
-    const r = realpathSync(resolve(expandHome(root)));
+    const abs = resolve(expandHome(root));
+    // A root that does not exist (typo, unmounted drive) allows nothing instead of throwing.
+    if (!existsSync(abs)) return false;
+    const r = realpathSync(abs);
     return real === r || real.startsWith(r + sep);
   });
   if (!ok) {
