@@ -48,7 +48,29 @@ checkout (the configured plugin directory whose manifest has id `paseo-mcp`) and
 `# managed-by: paseo plugin paseo-mcp` is never touched. The plugin build (`npm ci`, `npm run build`,
 `npm prune --omit=dev`) produces the `dist/` it starts.
 
+## Events (`server/events.ts`, `server/agent-source.ts`, `server/resources.ts`, `server/webhooks.ts`)
+
+- `EventHub` keeps the last events (1000, 60 min) and a small state per agent (in a turn, pending
+  permissions, archived, closed, labels). An incoming report that does not change that state is a
+  duplicate and dropped; that is how the hook and the push update for the same happening collapse.
+- `ClientEventSource` subscribes to the daemon's agent list. The first list only teaches the state;
+  every later snapshot is compared with it (`diff`) and turned into events. After a lost connection it
+  lists again and reports what changed meanwhile. `remove` updates for unknown agents (Paseo's own
+  helper agents) are ignored; for known ones it looks the agent up: archived or gone. A snapshot older
+  than the agent's last hook report is ignored, so a late "running" cannot invent a new turn.
+- In the plugin, `index.server.ts` adds observing hooks (`agent.create.after`, `agent.turn.before`,
+  `agent.turn.after`, `agent.permission.before/after`, `agent.archive.after`, `agent.close.after`).
+  They return at once; the work runs in the background. The first report of an unknown agent fetches
+  its snapshot so the event carries labels.
+- `registerAgentResources` adds the resources and subscribe handlers per MCP session and forwards hub
+  events as notifications to sessions that subscribed. HTTP sessions keep a bounded event store, so a
+  client reconnecting its SSE stream with `Last-Event-ID` gets what it missed.
+- `WebhookDispatcher` signs and posts events per endpoint, retries, bundles and pauses. Secrets and
+  pause flags live in the plugin's state file, never in the settings.
+
 ## Safe to load
 
-No agent hooks, so installing, reloading or removing the plugin never marks open agent sessions
-stale. The Test button starts its own short-lived stdio process and does not touch running clients.
+Only observing lifecycle hooks, no session-open hook. Paseo marks open sessions stale only when a
+plugin with a session-open hook starts, stops or reloads, so installing, reloading or removing this
+one leaves running agents alone. The Test button starts its own short-lived stdio process and does
+not touch running clients.

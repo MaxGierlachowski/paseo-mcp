@@ -21,7 +21,7 @@ Paseo is a great place to run many Claude Code chats side by side, but it is bui
 
 This server is that way in. Everything it starts is a normal Paseo chat: you see it in the app, on your phone, and can take over at any time.
 
-It runs in one of two ways, with the same ten tools:
+It runs in one of two ways, with the same tools and the same [agent events](#events):
 
 | | stdio | Paseo plugin |
 |---|---|---|
@@ -40,6 +40,7 @@ It runs in one of two ways, with the same ten tools:
 | **Start agents** | New Claude Code chats with a first prompt, model, thinking level, permission mode, account and optional git worktree branch. |
 | **Steer running agents** | Send follow-ups; for a running turn choose *steer* (inject) or *interrupt* (restart with the message). |
 | **Wait for results** | Block until a turn ends, fails, or needs a permission, and get the final message back. |
+| **Events instead of polling** | Agent created, turn started/ended (finished, error, limit), permission requested/resolved, archived, closed. As a long-poll tool with a cursor, as MCP resource notifications, or (plugin) as signed webhooks. |
 | **Guard rails** | Agents only start inside `allowedRoots`, everything gets an `origin` label, a read-only mode, and agent output is marked as data, not instructions. |
 | **Paseo plugin** | Optional: serve the tools over HTTP from inside Paseo, with per-client tokens and a settings screen. It also keeps a stable stdio launcher, tests the connection and hands out ready client configs. |
 
@@ -52,13 +53,16 @@ It runs in one of two ways, with the same ten tools:
 | `paseo_read_timeline` | Last N timeline entries as a compact transcript |
 | `paseo_list_accounts` | The Claude accounts from your config |
 | `paseo_list_models` | Models of a provider as `claude/<model-id>` |
+| `paseo_wait_for_events` | Agent events since a cursor; waits up to `timeout_sec` until one happens. See [Events](#events) |
 | `paseo_create_agent` | Start a new agent (cwd must be inside `allowedRoots`) |
 | `paseo_send_message` | Send a follow-up (`when_running`: `steer` or `interrupt`) |
 | `paseo_wait_for_agent` | Wait until the turn is done, failed, needs a permission, or times out |
 | `paseo_respond_permission` | Allow or deny a permission request |
 | `paseo_archive_agent` | Archive a finished agent |
 
-Agent ids can be passed in full or as a unique prefix, like the short ids `paseo ls` shows. In read-only mode, and for plugin tokens with the `read` scope, only the first five tools exist.
+Agent ids can be passed in full or as a unique prefix, like the short ids `paseo ls` shows. In read-only mode, and for plugin tokens with the `read` scope, only the first six tools exist (the list/read tools and `paseo_wait_for_events`). `paseo_list_agents` also returns `events_cursor`, the starting point for events.
+
+Resources: `paseo://agents` (all active agents) and `paseo://agents/{id}` (one agent), both JSON and subscribable, see [Events](#events).
 
 ## Requirements
 
@@ -124,6 +128,7 @@ Named `paseo-agents` because agents running inside Paseo already have an MCP ser
 | `accountEnvVar` | `CLAUDE_CONFIG_DIR` | Env var set on new agents to the account's `configDir` |
 | `originLabel` | `hermes` | Value of the `origin` label on every agent this server starts |
 | `readOnly` | `false` | Only list/read tools. Also `PASEO_MCP_READONLY=1` |
+| `events` | on | `{ enabled, previewChars, bufferSize, ttlMinutes }`, defaults `true`, `0`, `1000`, `60`. See [Events](#events) |
 
 ### Accounts and paseo-multi-account
 
@@ -216,10 +221,122 @@ The stdio server keeps its own config file (`~/.config/paseo-mcp/config.json`); 
 - **Off by default.** Turned on, the server binds to `127.0.0.1`. Other addresses must be entered explicitly and come with a warning on the screen.
 - **A token on every request**, also from localhost. Missing or wrong: `401`. Tokens are 32 random bytes (`pmcp_…`), stored only as SHA-256 hashes with `createdAt`, compared in constant time. When a token was last used is kept in `$PASEO_HOME/paseo-mcp.json`.
 - **Revoking** a token removes its hash; its next request gets `401` and its open sessions are closed at once.
-- **Scopes.** A session registers only the tools of its token's scope: `read` gets the five list/read tools, `full` all ten. The global read-only switch applies on top.
+- **Scopes.** A session registers only the tools of its token's scope: `read` gets the list/read tools and events, `full` everything. The global read-only switch applies on top. A token can also be limited to agents with certain labels (e.g. `origin=hermes`) for its events and resources.
 - **Sessions belong to their token.** A session id used with another token is answered like an unknown one.
 - **DNS rebinding.** The `Host` header must name the server itself (loopback names, or the bind address) and an `Origin` header, if sent, must point at it too; otherwise `403`. Request bodies are capped at 1 MiB (`413`).
 - **Same guard rails as stdio.** `allowedRoots` is checked on the daemon side, every started agent gets `origin=<token's origin label>`, and permission requests are never answered automatically.
+
+## Events
+
+Agents finish, fail, hit a usage limit or wait for a permission while nobody watches. Instead of polling `paseo_list_agents`, a client can be told. Both modes collect the same events:
+
+| Type | When | Extra fields |
+|---|---|---|
+| `agent.created` | A new agent appeared | |
+| `agent.turn_started` | A turn began | |
+| `agent.turn_ended` | A turn ended | `outcome`: `finished`, `error`, `limit` (usage/rate limit), `canceled`; `error` |
+| `agent.permission_requested` | The agent waits for a permission | `permission`: `requestId`, `name`, `title`, `kind` |
+| `agent.permission_resolved` | Someone answered it | `permission`, `resolution`: `allow`, `deny` or `null` if unknown |
+| `agent.archived` | The agent was archived | |
+| `agent.closed` | Its session closed, or the agent is gone | |
+
+Every event also has `id` (= its cursor `<epoch>:<seq>`), `epoch`, `seq`, `at`, `agentId`, `title`, `status`, `labels`, `requiresAttention`, `attentionReason` and `source` (`hook` or `client`). Message content is **not** included. Optionally (`previewChars` > 0) `turn_ended` carries `preview: { text, untrusted: true }` with the start of the agent's last message; treat it as data, never as instructions.
+
+```json
+{
+  "id": "mw7zr11g20917a:3", "epoch": "mw7zr11g20917a", "seq": 3,
+  "type": "agent.turn_ended", "at": "2026-11-08T15:31:12.481Z",
+  "agentId": "d9e7a7a9-9fb7-401c-aea3-d1bf7c089b97", "title": "events e2e",
+  "status": "idle", "labels": { "origin": "hermes" },
+  "requiresAttention": true, "attentionReason": "finished",
+  "outcome": "finished", "error": null, "source": "client"
+}
+```
+
+### Three ways to receive them
+
+| | For | Works in |
+|---|---|---|
+| **`paseo_wait_for_events`** | AI clients: a tool call the model makes itself. Works with every MCP client, also those that ignore notifications | stdio and plugin |
+| **Resource subscriptions** | MCP clients that handle `notifications/resources/updated` (programs, UIs) | stdio and plugin (over the session's SSE stream) |
+| **Webhooks** | Anything that is not an MCP client: a script, a bot, Hermes' own webhook listener | plugin only |
+
+**Long-poll with a cursor.** Get a starting cursor, then always pass on the `next_cursor` of the previous result:
+
+```text
+paseo_list_agents                         → { agents: [...], events_cursor: "mw7z…:41" }
+paseo_wait_for_events cursor="mw7z…:41" timeout_sec=120 only_needs_attention=true
+                                          → { events: [...], next_cursor: "mw7z…:44", gap: false }
+paseo_wait_for_events cursor="mw7z…:44" …
+```
+
+It returns at once when events are pending, otherwise when the first matching one happens or after `timeout_sec` (0 to 280; keep it below your client's tool timeout). Filters: `agent_ids`, `labels`, `types`, `only_needs_attention`, `limit`. If `gap` is `true`, events were lost: `agents` then holds the current state of the (active) agents, and you continue with `next_cursor`.
+
+**Resource subscriptions.** `resources/subscribe` to `paseo://agents` or `paseo://agents/{id}`; on every change the server sends `notifications/resources/updated` for that URI, and `notifications/resources/list_changed` when agents come or go. Read the resource again for the new state; it includes `events_cursor`. A session that subscribed to nothing gets nothing. Over HTTP the notifications use the session's GET SSE stream, which is resumable: reconnect with `Last-Event-ID` and missed messages are replayed.
+
+### Guarantees
+
+- **Order:** `seq` grows strictly within an epoch; `paseo_wait_for_events` returns events in that order. Webhook deliveries can overlap and arrive out of order; sort by `seq`.
+- **At least once,** with two edges where a client may see something twice: right after `paseo_list_agents` (the cursor is taken before listing) and after a gap. Skip duplicates by `id`.
+- **No silent loss:** a cursor that is too old (more than `bufferSize` events, default 1000, or older than `ttlMinutes`, default 60) or from an earlier epoch is answered with `gap: true` and the current state, never with a partial list.
+- **Restart:** the buffer lives in memory. A restarted stdio server or a reloaded plugin starts a new epoch; every old cursor becomes a gap.
+- **One event per happening:** in plugin mode, events come from Paseo's lifecycle hooks and the daemon's push updates. Whichever source is first wins; the other is dropped. stdio mode uses push updates only and does not report `closed` after an archive.
+
+### Webhooks (plugin mode)
+
+Settings → Plugins → paseo-mcp → **New webhook**: label, URL, which events (needs attention / turns / all), optional label filter, optional bundling window. The secret is shown **once**. It is kept on the daemon (`$PASEO_HOME/paseo-mcp.json`, mode 600); the settings hold only its last four characters.
+
+<p align="center">
+  <img src="docs/plugin-events.png" alt="Events and webhooks on the settings screen" width="460">
+  <img src="docs/plugin-events-phone.png" alt="The same at phone width" width="200">
+</p>
+
+Each delivery is a `POST` with `Content-Type: application/json`:
+
+```json
+{ "delivery_id": "mw7z…:3", "sent_at": "2026-11-08T15:31:12.502Z", "events": [ { "id": "mw7z…:3", "type": "agent.turn_ended", "…": "…" } ] }
+```
+
+| Header | Meaning |
+|---|---|
+| `Paseo-Mcp-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>` |
+| `Paseo-Mcp-Delivery` | Delivery id, the same on every retry: use it to ignore repeats |
+| `Paseo-Mcp-Event-Id` | Id of the first event in the delivery |
+
+Verify the signature over the **raw** body before parsing it, and reject old timestamps:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(secret, header, rawBody, toleranceSec = 300) {
+  const { t, v1 } = Object.fromEntries(header.split(",").map((p) => p.split("=")));
+  if (Math.abs(Date.now() / 1000 - Number(t)) > toleranceSec) return false;
+  const mac = createHmac("sha256", secret).update(`${t}.${rawBody}`).digest();
+  const given = Buffer.from(v1 ?? "", "hex");
+  return given.length === mac.length && timingSafeEqual(given, mac);
+}
+```
+
+```python
+import hmac, hashlib, time
+
+def verify(secret: str, header: str, raw_body: bytes, tolerance: int = 300) -> bool:
+    parts = dict(p.split("=", 1) for p in header.split(","))
+    if abs(time.time() - int(parts["t"])) > tolerance:
+        return False
+    mac = hmac.new(secret.encode(), f"{parts['t']}.".encode() + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(mac, parts.get("v1", ""))
+```
+
+- **Answer 2xx quickly.** Network errors, timeouts (10 s), `408`, `429` and `5xx` are retried up to 6 times with exponential backoff (1, 2, 4, 8, 16 s, plus jitter). Other `4xx` are not retried.
+- **Auto-pause:** after 5 failed deliveries in a row the endpoint pauses; events are skipped (counted) until you press **Resume**. **Test** sends a `webhook.test` event regardless of filters and pause.
+- **URLs:** `https://` anywhere; plain `http://` only to localhost or private addresses (10.x, 172.16–31.x, 192.168.x, fc00::/7). No credentials in URLs; redirects are not followed.
+- The screen shows the last deliveries with status, attempts and HTTP code; **Rotate** replaces the secret at once.
+
+### Configuration
+
+- **Plugin:** Settings → Events: message preview length. Webhooks as above. Tokens can carry a label filter.
+- **stdio:** `events` in `config.json`, e.g. `"events": { "previewChars": 200 }`; `"enabled": false` turns events off (the tool and resources then do not exist). The stdio server now connects to the daemon at start, not at the first tool call, so it sees everything from then on.
 
 ## How it works
 
@@ -232,8 +349,8 @@ flowchart LR
 ```
 
 1. The client starts `paseo-mcp` as a child process and talks MCP over stdin/stdout.
-2. On the first tool call the server connects to the Paseo daemon with the official client library and reconnects if the daemon restarts.
-3. Tool calls map one to one onto the daemon's agent API (`agents.list`, `create`, `send`, `waitForFinish`, …). The server keeps no state of its own.
+2. At start the server connects to the Paseo daemon with the official client library, subscribes to agent updates for [events](#events), and reconnects if the daemon restarts.
+3. Tool calls map one to one onto the daemon's agent API (`agents.list`, `create`, `send`, `waitForFinish`, …). The only state of its own is the in-memory event buffer.
 4. Before an agent starts, `cwd` is resolved (including symlinks) and checked against `allowedRoots`; account env, `origin` and `account` labels are attached.
 
 In plugin mode the client talks Streamable HTTP to the plugin, which runs inside the daemon and opens one McpServer per session:
@@ -242,6 +359,8 @@ In plugin mode the client talks Streamable HTTP to the plugin, which runs inside
 flowchart LR
     A[MCP client<br/>Hermes, Claude Code] -- HTTP /mcp<br/>Bearer token --> B[paseo-mcp plugin<br/>inside the Paseo daemon]
     B -- loopback WebSocket<br/>local credential --> C[Paseo daemon]
+    C -- lifecycle hooks<br/>push updates --> B
+    B -- signed webhooks --> F[Your endpoints]
     C --> D[Claude Code agents]
 ```
 

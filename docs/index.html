@@ -182,6 +182,7 @@
       <a href="#features">Features</a>
       <a href="#install">Install</a>
       <a href="#plugin">Plugin mode</a>
+      <a href="#events">Events</a>
       <a href="#how">How it works</a>
       <a href="#tools">Tools</a>
       <a href="#safety">Safety</a>
@@ -245,9 +246,9 @@
         <p>Send follow-ups. For a running turn, choose <i>steer</i> to add the message or <i>interrupt</i> to restart with it.</p>
       </div>
       <div class="card">
-        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-        <h3>Wait for results</h3>
-        <p>Block until a turn ends, fails or needs a permission, and get the agent's final message back.</p>
+        <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div>
+        <h3>Wait, or be told</h3>
+        <p>Block until a turn ends, or get events (finished, failed, limit, permission) as a long-poll tool, resource notifications or signed webhooks.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
@@ -305,13 +306,13 @@ cd paseo-mcp && npm install</code></pre>
 <section id="plugin">
   <div class="wrap">
     <h2>Plugin mode: MCP over HTTP from inside Paseo</h2>
-    <p class="sub">Installed as a Paseo plugin, the same ten tools are served over Streamable HTTP by the daemon itself. No separate process, no config file: everything is set on the plugin's settings screen, and every client gets its own token. stdio clients get a stable launcher, a connection test and ready-made configs from the same screen.</p>
+    <p class="sub">Installed as a Paseo plugin, the same tools are served over Streamable HTTP by the daemon itself. No separate process, no config file: everything is set on the plugin's settings screen, and every client gets its own token. stdio clients get a stable launcher, a connection test and ready-made configs from the same screen.</p>
     <div class="two">
       <div>
         <ol class="steps">
           <li><strong>Install the plugin</strong><span>Paseo clones it, runs <code>npm ci</code> and loads it. The HTTP server stays off.</span></li>
           <li><strong>Open the settings</strong><span>⌘K → <i>MCP server</i>, or Settings → Plugins → paseo-mcp. Add your allowed roots.</span></li>
-          <li><strong>Create a token per client</strong><span>Label and scope: <i>read</i> for the five list/read tools, <i>full</i> for all ten. It is shown once.</span></li>
+          <li><strong>Create a token per client</strong><span>Label and scope: <i>read</i> for the list/read tools and events, <i>full</i> for everything. Optionally limited to agents with a label. It is shown once.</span></li>
           <li><strong>Turn the server on and connect</strong><span>Copy the ready snippet for Hermes or Claude Code (CLI or <code>.mcp.json</code>) from the same screen.</span></li>
         </ol>
       </div>
@@ -362,6 +363,99 @@ cd paseo-mcp && npm install</code></pre>
   </div>
 </section>
 
+<section id="events">
+  <div class="wrap">
+    <h2>Events: be told instead of polling</h2>
+    <p class="sub">Agents finish, fail, hit a usage limit or wait for a permission while nobody watches. Both modes collect the same events, from Paseo's lifecycle hooks and the daemon's push updates, each happening once.</p>
+    <div class="grid">
+      <div class="card"><span class="n" style="font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--accent);letter-spacing:.08em">01 · ANY CLIENT</span><h3><code>paseo_wait_for_events</code></h3><p>A tool the model calls itself: returns at once if events are pending, else waits up to <code>timeout_sec</code>. Pass on <code>next_cursor</code> every time. Works where notifications are ignored.</p></div>
+      <div class="card"><span class="n" style="font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--accent);letter-spacing:.08em">02 · MCP NATIVE</span><h3>Resource subscriptions</h3><p>Subscribe to <code>paseo://agents</code> or <code>paseo://agents/{id}</code> and get <code>resources/updated</code>. Over HTTP on a resumable SSE stream (<code>Last-Event-ID</code>).</p></div>
+      <div class="card"><span class="n" style="font:700 12px/1 ui-monospace,Menlo,monospace;color:var(--accent);letter-spacing:.08em">03 · PLUGIN</span><h3>Signed webhooks</h3><p>POSTs to your endpoints with HMAC-SHA256, a delivery id for idempotency, retries with backoff, bundling and auto-pause.</p></div>
+    </div>
+
+    <div class="two" style="margin-top:36px">
+      <div>
+        <h2 style="font-size:22px">Cursor in, cursor out</h2>
+        <pre style="margin-top:14px"><code><span class="c"># a consistent start: state plus a cursor</span>
+paseo_list_agents
+  → { agents: [...], events_cursor: "mw7z…:41" }
+
+paseo_wait_for_events cursor="mw7z…:41"
+    timeout_sec=120 only_needs_attention=true
+  → { events: [...], next_cursor: "mw7z…:44", gap: false }
+
+<span class="c"># always continue with next_cursor</span>
+paseo_wait_for_events cursor="mw7z…:44" …</code></pre>
+        <p class="note">Filters: <code>agent_ids</code>, <code>labels</code>, <code>types</code>, <code>only_needs_attention</code>, <code>limit</code>. A token can be limited to labels such as <code>origin=hermes</code>.</p>
+      </div>
+      <div>
+        <h2 style="font-size:22px">Guarantees</h2>
+        <ul class="req" style="margin-top:14px">
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>Ordered:</strong> <code>seq</code> grows within an epoch; webhooks may overlap, sort by <code>seq</code>.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>At least once:</strong> repeats only right after a list or a gap; skip them by <code>id</code>.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>No silent loss:</strong> a cursor older than the buffer (1000 events, 60 min) or from before a restart gets <code>gap: true</code> and the current state.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span><strong>Metadata only:</strong> no message content, except an opt-in preview marked untrusted.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="table-wrap" style="margin-top:36px"><table>
+      <thead><tr><th>Type</th><th>When</th><th>Extra fields</th></tr></thead>
+      <tbody>
+        <tr><td><code>agent.created</code></td><td>A new agent appeared</td><td></td></tr>
+        <tr><td><code>agent.turn_started</code></td><td>A turn began</td><td></td></tr>
+        <tr><td><code>agent.turn_ended</code></td><td>A turn ended</td><td><code>outcome</code>: finished, error, limit, canceled · <code>error</code></td></tr>
+        <tr><td><code>agent.permission_requested</code></td><td>Waiting for a permission</td><td><code>permission</code>: requestId, name, title, kind</td></tr>
+        <tr><td><code>agent.permission_resolved</code></td><td>Someone answered</td><td><code>permission</code>, <code>resolution</code></td></tr>
+        <tr><td><code>agent.archived</code></td><td>Archived</td><td></td></tr>
+        <tr><td><code>agent.closed</code></td><td>Session closed or agent gone</td><td></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Every event: <code>id</code> (its cursor <code>epoch:seq</code>), <code>at</code>, <code>agentId</code>, <code>title</code>, <code>status</code>, <code>labels</code>, <code>requiresAttention</code>, <code>attentionReason</code>, <code>source</code>.</p>
+
+    <h2 style="font-size:22px;margin-top:48px">Webhooks</h2>
+    <p class="sub" style="margin-bottom:22px">Settings → Plugins → paseo-mcp → New webhook. The secret is shown once and stays on the daemon. <code>https://</code> anywhere, plain <code>http://</code> only to localhost or private addresses.</p>
+    <div class="two">
+      <div>
+        <pre><code><span class="c"># POST, application/json</span>
+Paseo-Mcp-Signature: t=1794150672,v1=&lt;hex&gt;
+Paseo-Mcp-Delivery:  mw7z…:3      <span class="c"># same on every retry</span>
+Paseo-Mcp-Event-Id:  mw7z…:3
+
+{ "delivery_id": "mw7z…:3", "sent_at": "…",
+  "events": [ { "type": "agent.turn_ended", … } ] }</code></pre>
+      </div>
+      <div>
+        <pre><button class="copy" data-copy='import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(secret, header, rawBody, toleranceSec = 300) {
+  const { t, v1 } = Object.fromEntries(header.split(",").map((p) => p.split("=")));
+  if (Math.abs(Date.now() / 1000 - Number(t)) > toleranceSec) return false;
+  const mac = createHmac("sha256", secret).update(`${t}.${rawBody}`).digest();
+  const given = Buffer.from(v1 ?? "", "hex");
+  return given.length === mac.length &amp;&amp; timingSafeEqual(given, mac);
+}'>Copy</button><code><span class="c">// verify over the raw body, before parsing</span>
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(secret, header, rawBody, toleranceSec = 300) {
+  const { t, v1 } = Object.fromEntries(
+    header.split(",").map((p) =&gt; p.split("=")));
+  if (Math.abs(Date.now() / 1000 - Number(t)) &gt; toleranceSec) return false;
+  const mac = createHmac("sha256", secret)
+    .update(`${t}.${rawBody}`).digest();
+  const given = Buffer.from(v1 ?? "", "hex");
+  return given.length === mac.length &amp;&amp; timingSafeEqual(given, mac);
+}</code></pre>
+        <p class="note">Answer 2xx fast. Errors, timeouts, 408, 429 and 5xx are retried up to 6 times (1, 2, 4, 8, 16 s). After 5 failed deliveries in a row the endpoint pauses until you resume it. A Python example is in the README.</p>
+      </div>
+    </div>
+    <div class="shots" style="margin-top:28px">
+        <img class="shot" src="plugin-events.png" alt="Events and webhooks on the settings screen: preview length, endpoints with Test, Disable and More, last delivery." loading="lazy">
+        <img class="shot phone" src="plugin-events-phone.png" alt="The same at phone width." loading="lazy">
+    </div>
+  </div>
+</section>
+
 <section id="how">
   <div class="wrap">
     <h2>How it works</h2>
@@ -388,7 +482,7 @@ cd paseo-mcp && npm install</code></pre>
 <section id="tools">
   <div class="wrap">
     <h2>Tools</h2>
-    <p class="sub">Agent ids can be passed in full or as a unique prefix, like the short ids <code>paseo ls</code> shows. In read-only mode only the first five exist.</p>
+    <p class="sub">Agent ids can be passed in full or as a unique prefix, like the short ids <code>paseo ls</code> shows. In read-only mode and for read tokens only the first six exist. Resources <code>paseo://agents</code> and <code>paseo://agents/{id}</code> can be read and subscribed to.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
       <tbody>
@@ -397,6 +491,7 @@ cd paseo-mcp && npm install</code></pre>
         <tr><td><code>paseo_read_timeline</code></td><td>The last N timeline entries as a compact transcript</td></tr>
         <tr><td><code>paseo_list_accounts</code></td><td>The Claude accounts from your config</td></tr>
         <tr><td><code>paseo_list_models</code></td><td>Models of a provider as <code>claude/&lt;model-id&gt;</code></td></tr>
+        <tr><td><code>paseo_wait_for_events</code></td><td>Agent events since a cursor; waits until one happens. See <a href="#events">Events</a></td></tr>
         <tr><td><code>paseo_create_agent</code></td><td>Start a new agent inside <code>allowedRoots</code></td></tr>
         <tr><td><code>paseo_send_message</code></td><td>Send a follow-up; <code>steer</code> or <code>interrupt</code> while it runs</td></tr>
         <tr><td><code>paseo_wait_for_agent</code></td><td>Wait until the turn is done, failed, needs a permission, or times out</td></tr>
