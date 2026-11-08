@@ -29,7 +29,7 @@ It runs in one of two ways, with the same ten tools:
 | Transport | stdin/stdout | Streamable HTTP at `http://127.0.0.1:6790/mcp` |
 | Configured in | `~/.config/paseo-mcp/config.json` | Settings → Plugins → paseo-mcp |
 | Access | whoever can start the process | a bearer token per client, scoped `read` or `full` |
-| Set up | [Install](#install) | [Plugin mode](#plugin-mode) |
+| Set up | [Install](#install), or the plugin's launcher `~/.local/bin/paseo-mcp` | [Plugin mode](#plugin-mode) |
 
 ## Features
 
@@ -41,7 +41,7 @@ It runs in one of two ways, with the same ten tools:
 | **Steer running agents** | Send follow-ups; for a running turn choose *steer* (inject) or *interrupt* (restart with the message). |
 | **Wait for results** | Block until a turn ends, fails, or needs a permission, and get the final message back. |
 | **Guard rails** | Agents only start inside `allowedRoots`, everything gets an `origin` label, a read-only mode, and agent output is marked as data, not instructions. |
-| **Paseo plugin** | Optional: serve the tools over HTTP from inside Paseo, with per-client tokens and a settings screen. |
+| **Paseo plugin** | Optional: serve the tools over HTTP from inside Paseo, with per-client tokens and a settings screen. It also keeps a stable stdio launcher, tests the connection and hands out ready client configs. |
 
 ## Tools
 
@@ -80,6 +80,8 @@ cp config.example.json ~/.config/paseo-mcp/config.json
 
 Then edit `~/.config/paseo-mcp/config.json` (see below) and connect your client.
 
+Installed the [plugin](#plugin-mode)? Then you don't need a clone: the plugin keeps a stable launcher at `~/.local/bin/paseo-mcp` and shows ready-made stdio configs, see [stdio clients through the plugin](#stdio-clients-through-the-plugin).
+
 ### Hermes
 
 `~/.hermes/config.yaml`:
@@ -100,8 +102,10 @@ Hermes only passes `PATH` and `HOME` to MCP servers; anything else belongs under
 ### Claude Code
 
 ```sh
-claude mcp add paseo -- node /path/to/paseo-mcp/dist/index.js
+claude mcp add paseo-agents -- node /path/to/paseo-mcp/dist/index.js
 ```
+
+Named `paseo-agents` because agents running inside Paseo already have an MCP server called `paseo`.
 
 ## Configuration
 
@@ -110,7 +114,7 @@ claude mcp add paseo -- node /path/to/paseo-mcp/dist/index.js
 | Key | Default | Meaning |
 |---|---|---|
 | `daemonUrl` | `ws://127.0.0.1:6767/ws` | WebSocket of the Paseo daemon |
-| `password` | – | Daemon password, if set. `PASEO_PASSWORD` wins |
+| `password` | – | Daemon password, if set. `PASEO_PASSWORD` wins. Without one, the server signs in with `$PASEO_HOME/local-credential` (loopback daemons only), like the `paseo` CLI |
 | `allowedRoots` | **required** | Agents may only start inside these folders (symlinks resolved) |
 | `defaultProvider` | – | `provider/model`, e.g. `claude/claude-sonnet-5-5`. Check with `paseo_list_models` |
 | `defaultThinking` | – | e.g. `low`, `medium`, `high` |
@@ -131,7 +135,10 @@ If you use [paseo-multi-account](https://github.com/MaxGierlachowski/paseo-multi
 
 Installed as a Paseo plugin, paseo-mcp serves the same tools over [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) from inside the Paseo daemon. There is no process to start and no config file: everything is set on the plugin's settings screen. The stdio mode above keeps working unchanged next to it.
 
-<p align="center"><img src="docs/plugin-settings.png" alt="The MCP server settings screen in Paseo" width="520"></p>
+<p align="center">
+  <img src="docs/plugin-settings.png" alt="The MCP server settings screen in Paseo: HTTP server, tokens, HTTP client configs" width="420">
+  <img src="docs/plugin-settings-phone.png" alt="The same screen in the Paseo phone app width" width="200">
+</p>
 
 ### Install
 
@@ -141,11 +148,11 @@ paseo plugin install github:MaxGierlachowski/paseo-mcp
 
 On macOS the CLI ships inside the app: `/Applications/Paseo.app/Contents/Resources/bin/paseo`. Paseo asks you to trust the plugin (plugins run unsandboxed), clones it, runs `npm ci --omit=dev` and loads it. Plugins must be enabled (`"pluginsEnabled": true` in `~/.paseo/config.json`). The HTTP server stays **off** until you turn it on.
 
-If another plugin already uses the id `paseo-mcp`, Paseo refuses the install; remove that one first or pass `--id`.
+If another plugin already uses the id `paseo-mcp` (for example the earlier local "Paseo MCP for Hermes" build), Paseo refuses the install; remove that one first or pass `--id`. This plugin covers everything the local build did and takes over its launcher.
 
 ### Set up
 
-1. Open the settings: ⌘K → **MCP server**, or Settings → Plugins → paseo-mcp.
+1. Open the settings: ⌘K → **MCP server** (also finds "hermes", "token", "config"), or Settings → Plugins → paseo-mcp.
 2. Under **Agents**, add the folders agents may start in (`allowedRoots`). Without one, `paseo_create_agent` refuses every start.
 3. Under **New token**, create one token per client: a label (e.g. `Hermes`), a scope, optionally an origin label. Copy the token; it is shown **once**.
 4. Turn on **Enabled**. The status row shows the URL, or why the server could not start (e.g. the port is taken).
@@ -179,13 +186,30 @@ mcp_servers:
     timeout: 300          # paseo_wait_for_agent blocks up to timeout_sec
 ```
 
-Claude Code:
+Claude Code, as a command or in a project `.mcp.json`:
 
 ```sh
-claude mcp add --transport http paseo http://127.0.0.1:6790/mcp --header "Authorization: Bearer <token>"
+claude mcp add --transport http paseo-agents http://127.0.0.1:6790/mcp --header "Authorization: Bearer <token>"
+```
+
+```json
+{ "mcpServers": { "paseo-agents": { "type": "http", "url": "http://127.0.0.1:6790/mcp", "headers": { "Authorization": "Bearer <token>" } } } }
 ```
 
 Any other client: Streamable HTTP, URL `http://127.0.0.1:6790/mcp`, header `Authorization: Bearer <token>`.
+
+### stdio clients through the plugin
+
+Clients that start the server as a child process don't need the HTTP server or a token. The plugin helps there too:
+
+<p align="center"><img src="docs/plugin-stdio.png" alt="The stdio section: command, Test button, config file and sign-in status" width="460"></p>
+
+- **A stable command.** On every load the plugin writes `~/.local/bin/paseo-mcp` (another path via `PASEO_MCP_LAUNCHER`), a two-line script that starts `dist/index.js` of the current plugin checkout. Git installs land in a new folder on every update; the launcher follows them, so client configs never change. It never overwrites a file it did not write.
+- **Test connection.** Starts the server exactly like a client does (only `PATH`, `HOME` and `PASEO_MCP_CONFIG`), lists the tools and counts the agents.
+- **Status.** Which config file the stdio server reads, its allowed roots and accounts, and how it signs in to the daemon. The local credential is shown masked and never leaves the daemon.
+- **Copyable configs** for Hermes (`command:`), Claude Code (`.mcp.json` and `claude mcp add`) and any stdio client.
+
+The stdio server keeps its own config file (`~/.config/paseo-mcp/config.json`); the screen shows it but never edits it.
 
 ### Security model
 
@@ -236,15 +260,18 @@ Starting agents with repository and tool access is powerful. Keep in mind:
 npm run build                          # compile server/ to dist/
 npm test                               # build, then unit and HTTP integration tests
 npm run typecheck                      # the plugin entry points and settings screen
+SMOKE_COMMAND=~/.local/bin/paseo-mcp npm run smoke   # same, through the launcher
 PASEO_MCP_CONFIG=~/.config/paseo-mcp/config.json \
   npm run smoke -- paseo_list_accounts 'paseo_list_agents={"limit":5}'
 ```
 
-`smoke.mjs` starts the server like an MCP client would and calls the tools you name (`tool=<json args>`).
+`smoke.mjs` starts the server like an MCP client would (only `PATH`, `HOME`, `PASEO_MCP_CONFIG`) and calls the tools you name (`tool=<json args>`); it exits non-zero when a tool returns an error.
 
-Layout: `server/` holds the tools (`tools.ts`), the HTTP transport (`http.ts`, `auth.ts`) and the stdio entry (`index.ts`, built to `dist/index.js`); `server/plugin/` the daemon side of the plugin; `shared/` the settings and RPC contracts; `client/` the settings screen. `index.server.ts` and `index.client.tsx` are the plugin entry points, compiled by Paseo itself. To try the plugin from a checkout, run `npm ci --omit=dev --ignore-scripts` in a copy of it (a directory install skips the build step) and `paseo plugin install <dir>`; test against a separate daemon with `--home <tmp-dir>` rather than your everyday one.
+Layout: `server/` holds the tools (`tools.ts`), the HTTP transport (`http.ts`, `auth.ts`) and the stdio entry (`index.ts`, built to `dist/index.js`); `server/plugin/` the daemon side of the plugin; `shared/` the settings and RPC contracts; `client/` the settings screen. `index.server.ts` and `index.client.tsx` are the plugin entry points, compiled by Paseo itself. To try the plugin from a checkout, run `npm ci --ignore-scripts && npm run build && npm prune --omit=dev` in a copy of it (a directory install skips the manifest's build step, a git install runs exactly these) and `paseo plugin install <dir>`; test against a separate daemon with `--home <tmp-dir>` rather than your everyday one.
 
 Tested against Paseo daemon 0.15 and `@getpaseo/client` 0.15.
+
+Internals of the plugin are in [OVERVIEW.md](OVERVIEW.md), changes in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

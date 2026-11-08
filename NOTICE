@@ -1,5 +1,8 @@
 paseo-mcp
 Copyright 2026 Max Gierlachowski
 
-This product talks to Paseo (https://github.com/getpaseo/paseo) through its
-published client library @getpaseo/client. No Paseo source code is included.
+This product talks to Paseo (https://github.com/getpaseo/paseo) through its published client
+library @getpaseo/client and plugin SDK @getpaseo/plugin, Copyright (c) 2025-present Mohamed Boudra,
+licensed under the Apache License, Version 2.0. It is built on the Model Context Protocol TypeScript
+SDK (@modelcontextprotocol/sdk), licensed under the MIT License. No source files are copied from
+either project.
