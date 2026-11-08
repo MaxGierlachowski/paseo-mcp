@@ -1,0 +1,22 @@
+{
+  "daemonUrl": "ws://127.0.0.1:6767/ws",
+  "defaultProvider": "claude/claude-sonnet-5-5",
+  "defaultThinking": "medium",
+  "defaultMode": "auto",
+  "allowedRoots": [
+    "~/Repositories"
+  ],
+  "accounts": {
+    "work": {
+      "configDir": "~/.claude-work",
+      "note": "Main account"
+    },
+    "second": {
+      "configDir": "~/.claude-second"
+    }
+  },
+  "defaultAccount": "work",
+  "accountEnvVar": "CLAUDE_CONFIG_DIR",
+  "originLabel": "hermes",
+  "readOnly": false
+}

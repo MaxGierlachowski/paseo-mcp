@@ -1,0 +1,5 @@
+paseo-mcp
+Copyright 2026 Max Gierlachowski
+
+This product talks to Paseo (https://github.com/getpaseo/paseo) through its
+published client library @getpaseo/client. No Paseo source code is included.
