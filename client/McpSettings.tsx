@@ -1,14 +1,11 @@
 // Settings → Plugins → MCP server. Built from the host's settings components, so it looks like the
 // rest of Settings and works on every client. Switches and lists save at once; text fields save
 // with the Save action of their section.
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { View } from "react-native";
 import type { PluginCommandCapabilities, PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useSettings } from "@getpaseo/plugin/client";
-import type { PluginTheme } from "@getpaseo/plugin";
 import {
-  Icon,
-  copyText,
   useToast,
   SettingsAction,
   SettingsCard,
@@ -20,11 +17,14 @@ import {
   type SettingsInputHandle,
 } from "@getpaseo/plugin/client/ui";
 import { createTokenRpc, statusRpc, type McpStatus } from "../shared/rpc.js";
+import { Block, CodeBlock, SmallButton } from "./parts.js";
+import { StdioSection } from "./StdioSection.js";
 import { DEFAULT_BIND, mcpSettings, type McpSettings, type StoredToken } from "../shared/settings.js";
 import {
   TOKEN_PLACEHOLDER,
   ago,
   claudeCodeSnippet,
+  claudeJsonSnippet,
   connectUrl,
   day,
   hermesSnippet,
@@ -32,87 +32,9 @@ import {
   plural,
 } from "./format.js";
 
-type Colors = PluginTheme["colors"];
 type Rpc = PluginCommandCapabilities["rpc"];
 
 const STATUS_POLL_MS = 5_000;
-const MONO = Platform.select({ ios: "Menlo", android: "monospace", default: "ui-monospace, Menlo, monospace" });
-
-function SmallButton({ colors, label, onPress, disabled, primary, danger }: {
-  colors: Colors;
-  label: string;
-  onPress(): void;
-  disabled?: boolean;
-  primary?: boolean;
-  danger?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={{
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 6,
-        borderWidth: primary ? 0 : 1,
-        borderColor: danger ? colors.statusDanger : colors.border,
-        backgroundColor: primary ? colors.accent : "transparent",
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
-      <Text
-        style={{
-          color: primary ? colors.accentForeground : danger ? colors.statusDanger : colors.foreground,
-          fontSize: 12,
-          fontWeight: "600",
-        }}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-/** A monospace block with a copy button, for tokens and connection snippets. */
-function CodeBlock({ colors, text, copyLabel }: { colors: Colors; text: string; copyLabel: string }) {
-  const toast = useToast();
-  return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "flex-start",
-        gap: 8,
-        padding: 10,
-        borderRadius: 6,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.surface2,
-      }}
-    >
-      <Text selectable style={{ flex: 1, color: colors.foreground, fontFamily: MONO, fontSize: 12, lineHeight: 18 }}>
-        {text}
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={copyLabel}
-        hitSlop={8}
-        onPress={() =>
-          void copyText(text).then(
-            () => toast.show("Copied", { variant: "success" }),
-            () => toast.error("Could not copy"),
-          )
-        }
-      >
-        <Icon name="Copy" size={14} color={colors.foregroundMuted} />
-      </Pressable>
-    </View>
-  );
-}
-
-function Block({ children }: { children: ReactNode }) {
-  return <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>{children}</View>;
-}
 
 function scopeText(scope: StoredToken["scope"]): string {
   return scope === "full" ? "Full access" : "Read only";
@@ -436,7 +358,7 @@ export function makeMcpSettings(rpc: Rpc) {
         </SettingsSection>
 
         <SettingsSection
-          title="Connect a client"
+          title="Connect an HTTP client"
           info={
             created
               ? "These snippets contain the new token. Copy them before you hide it."
@@ -444,13 +366,24 @@ export function makeMcpSettings(rpc: Rpc) {
           }
         >
           <SettingsCard>
-            <SettingsRow label="Hermes" hint="~/.hermes/config.yaml" />
+            <SettingsRow label="Hermes · config.yaml" hint="Under mcp_servers in ~/.hermes/config.yaml" />
             <Block>
               <CodeBlock colors={colors} text={hermesSnippet(url, snippetToken)} copyLabel="Copy Hermes config" />
             </Block>
-            <SettingsRow label="Claude Code" hint="Run in a terminal" />
+            <SettingsRow
+              label="Claude Code · CLI"
+              hint="Named paseo-agents because Paseo agents already have a server called paseo."
+            />
             <Block>
               <CodeBlock colors={colors} text={claudeCodeSnippet(url, snippetToken)} copyLabel="Copy Claude Code command" />
+            </Block>
+            <SettingsRow label="Claude Code · .mcp.json" hint="Project .mcp.json" />
+            <Block>
+              <CodeBlock colors={colors} text={claudeJsonSnippet(url, snippetToken)} copyLabel="Copy .mcp.json" />
+            </Block>
+            <SettingsRow label="Any MCP client" hint="Streamable HTTP with this header" />
+            <Block>
+              <CodeBlock colors={colors} text={`URL: ${url}\nAuthorization: Bearer ${snippetToken}`} copyLabel="Copy URL and header" />
             </Block>
           </SettingsCard>
         </SettingsSection>
@@ -584,6 +517,8 @@ export function makeMcpSettings(rpc: Rpc) {
             <SettingsAction label="" actionLabel="Add account" disabled={state.saving} onPress={() => void addAccount()} />
           </SettingsCard>
         </SettingsSection>
+
+        <StdioSection rpc={rpc} colors={colors} />
       </>
     );
   }

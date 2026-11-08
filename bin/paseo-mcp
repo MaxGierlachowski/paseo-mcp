@@ -1,0 +1,10 @@
+#!/bin/sh
+# Starts the paseo-mcp stdio server from this checkout.
+# Config: $PASEO_MCP_CONFIG, default ~/.config/paseo-mcp/config.json.
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+ENTRY="$DIR/dist/index.js"
+if [ ! -f "$ENTRY" ]; then
+  echo "paseo-mcp: $ENTRY is missing. Run 'npm run build' in $DIR." >&2
+  exit 1
+fi
+exec node "$ENTRY" "$@"

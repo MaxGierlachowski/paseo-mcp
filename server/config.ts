@@ -63,6 +63,31 @@ export function loadConfig(): Config {
   return cfg;
 }
 
+/** Paseo's home directory; the daemon keeps its loopback credential there. */
+export function paseoHome(): string {
+  return expandHome(process.env.PASEO_HOME?.trim() || "~/.paseo");
+}
+
+/**
+ * Reads the token the local daemon writes to <PASEO_HOME>/local-credential, the same one the
+ * paseo CLI uses. Only offered to loopback daemons; never logged.
+ */
+export function readLocalCredential(daemonUrl: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(daemonUrl).hostname;
+  } catch {
+    return undefined;
+  }
+  if (!["127.0.0.1", "localhost", "[::1]", "::1"].includes(host)) return undefined;
+  try {
+    const token = readFileSync(join(paseoHome(), "local-credential"), "utf8").trim();
+    return token || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Resolves cwd and checks it lies inside an allowed root (symlinks resolved). */
 export function checkCwd(cfg: Pick<Config, "allowedRoots">, cwd: string): string {
   if (cfg.allowedRoots.length === 0) {

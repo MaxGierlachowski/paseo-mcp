@@ -5,17 +5,15 @@
 // loopback connection instead, authenticated with the local credential the daemon writes to
 // $PASEO_HOME/local-credential for local clients. No password or URL has to be configured.
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { paseoHome } from "../config.js";
 
 const LockSchema = z.object({ listen: z.string().min(1) });
 
-export function paseoHome(): string {
-  return process.env.PASEO_HOME?.trim() || join(homedir(), ".paseo");
-}
+export { paseoHome };
 
 /** ws URL of the local daemon, from the lock file it writes on start. */
 async function daemonUrl(home: string): Promise<string> {

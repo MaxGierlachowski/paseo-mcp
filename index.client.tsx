@@ -14,9 +14,9 @@ export default function contribute(client: PluginClientContext) {
     }),
     client.addCommandCenterItem({
       id: "open-mcp",
-      title: "MCP server: tokens and connection",
+      title: "MCP server: tokens and client configs for Hermes or Claude Code",
       icon: "Plug",
-      keywords: ["mcp", "hermes", "token", "http", "claude code", "connect"],
+      keywords: ["mcp", "hermes", "token", "http", "claude code", "connect", "config", "orchestrator", "copy", "stdio"],
       context: "global",
       onSelect: (context) => context.openSettings("mcp"),
     }),

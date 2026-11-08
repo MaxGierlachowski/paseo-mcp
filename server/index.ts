@@ -9,7 +9,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
-import { loadConfig, type Config } from "./config.js";
+import { loadConfig, readLocalCredential, type Config } from "./config.js";
 import { errText, registerTools } from "./tools.js";
 
 const cfg: Config = loadConfig();
@@ -24,15 +24,23 @@ async function paseo(): Promise<PaseoClient> {
   if (connecting) return connecting;
   connecting = (async () => {
     if (client) await client.close().catch(() => {});
-    const c = createPaseoClient({
+    // createPaseoClient passes its config on to DaemonClient, which accepts localCredential;
+    // PaseoClientConfig just does not declare it.
+    const options: Parameters<typeof createPaseoClient>[0] & {
+      localCredential?: () => string | undefined;
+    } = {
       url: cfg.daemonUrl,
       password: cfg.password,
+      // Without a password, authenticate like the paseo CLI does on this machine. Read on every
+      // connect: the daemon rotates it on restart.
+      localCredential: cfg.password ? undefined : () => readLocalCredential(cfg.daemonUrl),
       clientId: "paseo-mcp",
       connectTimeoutMs: 10_000,
       reconnect: { enabled: true },
       // stdout belongs to the MCP protocol; keep the SDK quiet.
       logger: { debug() {}, info() {}, warn() {}, error() {} },
-    });
+    };
+    const c = createPaseoClient(options);
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([

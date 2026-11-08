@@ -13,7 +13,16 @@ export function hermesSnippet(url: string, token: string, name = "paseo"): strin
   ].join("\n");
 }
 
-export function claudeCodeSnippet(url: string, token: string, name = "paseo"): string {
+export function claudeJsonSnippet(url: string, token: string, name = "paseo-agents"): string {
+  return JSON.stringify(
+    { mcpServers: { [name]: { type: "http", url, headers: { Authorization: `Bearer ${token}` } } } },
+    null,
+    2,
+  );
+}
+
+/** Named paseo-agents by default: Paseo agents already have an MCP server called paseo. */
+export function claudeCodeSnippet(url: string, token: string, name = "paseo-agents"): string {
   return `claude mcp add --transport http ${name} ${url} --header "Authorization: Bearer ${token}"`;
 }
 
