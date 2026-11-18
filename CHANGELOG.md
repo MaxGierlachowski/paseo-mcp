@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+Webhooks any receiver can verify, and events that say who started an agent.
+
+- **Signature schemes per webhook:** `paseo` (default, unchanged), `standard-webhooks`
+  ([standardwebhooks.com](https://www.standardwebhooks.com/), Svix-compatible: `webhook-id`,
+  `webhook-timestamp`, `webhook-signature`) and `github` (`X-Hub-Signature-256`, `X-GitHub-Event`,
+  `X-GitHub-Delivery`). Receiver-side helpers `verifyStandardWebhook` and `verifyGithubSignature`.
+- **Receiver-issued secrets:** create a webhook with, or switch it to, a secret the receiver gave you;
+  it is never echoed back. Generated secrets are now `whsec_` + standard base64 (valid Standard
+  Webhooks keys); a secret that does not fit the scheme is reported on the screen and fails deliveries
+  with a readable error.
+- **Custom headers** per webhook (e.g. `Authorization`), values kept on the daemon like secrets;
+  transport and signing headers are protected.
+- **Richer payloads:** every event has `cwd`, `provider` and a one-line `summary`; permission events
+  carry `description` (untrusted, shortened) and `actions`. Deliveries add `source`, `version`, `type`,
+  `summary` and `event` (the newest event) at top level for templates without array indexes.
+- **Back-reference to the caller:** labels come back in every event; documented convention
+  `origin_ref=<client session id>`, and `metaLabels` copies `_meta` fields of `tools/call` onto labels.
+- Fixed: in stdio mode a permission request from a lagging snapshot had `requiresAttention: false`
+  and was missed by `only_needs_attention`.
+- Fixed: concurrent writes of the plugin's state file could fail on the shared temporary file.
+
 ## 0.3.0 (unreleased)
 
 Agent events: push instead of polling.

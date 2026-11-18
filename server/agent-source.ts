@@ -5,9 +5,14 @@
  * what changed in between, so nothing is silently skipped.
  */
 import type { PaseoAgent, PaseoApi } from "@getpaseo/client";
-import { isLimitError, type AgentState, type EventHub, type EventInput, type PermissionInfo } from "./events.js";
+import { isLimitError, type AgentState, type EventHub, type EventInput, type PermissionAction, type PermissionInfo } from "./events.js";
 
 const RESYNC_CHECK_MS = 5_000;
+
+/** The answers a permission request offers, without styling hints. */
+export function permissionActions(actions: readonly { id: string; label: string; behavior: "allow" | "deny" }[] | undefined): PermissionAction[] | undefined {
+  return actions?.length ? actions.map(({ id, label, behavior }) => ({ id, label, behavior })) : undefined;
+}
 
 function permissions(a: PaseoAgent): PermissionInfo[] {
   return (a.pendingPermissions ?? []).map((p) => ({
@@ -15,6 +20,8 @@ function permissions(a: PaseoAgent): PermissionInfo[] {
     name: p.name ?? null,
     title: p.title ?? null,
     kind: p.kind ?? null,
+    ...(p.description ? { description: p.description } : {}),
+    ...(permissionActions(p.actions) ? { actions: permissionActions(p.actions) } : {}),
   }));
 }
 
@@ -24,6 +31,8 @@ function base(a: PaseoAgent) {
     title: a.title ?? null,
     status: a.status,
     labels: a.labels ?? {},
+    cwd: a.cwd ?? null,
+    provider: a.provider ?? null,
     requiresAttention: a.requiresAttention ?? false,
     attentionReason: a.attentionReason ?? null,
   };
@@ -59,7 +68,10 @@ export function diff(prev: AgentState | undefined, a: PaseoAgent): EventInput[] 
   const nowPending = permissions(a);
   const before = prev?.pendingPermissions ?? [];
   for (const p of nowPending) {
-    if (!before.some((q) => q.requestId === p.requestId)) out.push({ ...b, type: "agent.permission_requested", permission: p });
+    // A pending permission always waits on someone, even when the snapshot's attention flag lags behind.
+    if (!before.some((q) => q.requestId === p.requestId)) {
+      out.push({ ...b, type: "agent.permission_requested", permission: p, requiresAttention: true, attentionReason: "permission" });
+    }
   }
   for (const p of before) {
     if (!nowPending.some((q) => q.requestId === p.requestId)) out.push({ ...b, type: "agent.permission_resolved", permission: p, resolution: null });

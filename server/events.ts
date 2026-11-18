@@ -32,6 +32,16 @@ export interface PermissionInfo {
   name: string | null;
   title: string | null;
   kind: string | null;
+  /** What the agent says the permission is for, shortened. Agent output: data, not instructions. */
+  description?: string | null;
+  /** The answers the request offers, for paseo_respond_permission. */
+  actions?: PermissionAction[];
+}
+
+export interface PermissionAction {
+  id: string;
+  label: string;
+  behavior: "allow" | "deny";
 }
 
 /** What the hub knows about an agent; also the "current state" returned on a gap. */
@@ -40,6 +50,8 @@ export interface AgentState {
   title: string | null;
   status: string | null;
   labels: Record<string, string>;
+  cwd: string | null;
+  provider: string | null;
   requiresAttention: boolean;
   attentionReason: string | null;
   inTurn: boolean;
@@ -62,8 +74,13 @@ export interface AgentEvent {
   title: string | null;
   status: string | null;
   labels: Record<string, string>;
+  /** Working directory and provider of the agent, when known. */
+  cwd: string | null;
+  provider: string | null;
   requiresAttention: boolean;
   attentionReason: string | null;
+  /** One line for humans and prompt templates, e.g. `Agent "fix login" finished`. Built from the fields above. */
+  summary: string;
   /** turn_ended only. */
   outcome?: TurnOutcome;
   error?: string | null;
@@ -84,6 +101,8 @@ export interface EventInput {
   title?: string | null;
   status?: string | null;
   labels?: Record<string, string>;
+  cwd?: string | null;
+  provider?: string | null;
   requiresAttention?: boolean;
   attentionReason?: string | null;
   outcome?: TurnOutcome;
@@ -202,6 +221,8 @@ export class EventHub {
       title: state.title ?? prev?.title ?? null,
       status: state.status ?? prev?.status ?? null,
       labels: state.labels ?? prev?.labels ?? {},
+      cwd: state.cwd ?? prev?.cwd ?? null,
+      provider: state.provider ?? prev?.provider ?? null,
       requiresAttention: state.requiresAttention ?? prev?.requiresAttention ?? false,
       attentionReason: state.attentionReason !== undefined ? state.attentionReason : (prev?.attentionReason ?? null),
       inTurn: state.inTurn ?? prev?.inTurn ?? false,
@@ -240,18 +261,29 @@ export class EventHub {
     const prev = this.states.get(input.agentId);
     if (!this.isNew(input, prev)) {
       // Still learn fresher fields (title, labels) from the duplicate.
-      if (prev) this.seed({ agentId: input.agentId, title: input.title ?? undefined, labels: input.labels, status: input.status ?? undefined });
+      if (prev) {
+        this.seed({
+          agentId: input.agentId,
+          title: input.title ?? undefined,
+          labels: input.labels,
+          status: input.status ?? undefined,
+          cwd: input.cwd ?? undefined,
+          provider: input.provider ?? undefined,
+        });
+      }
       return null;
-    }
-    let pending = prev?.pendingPermissions ?? [];
-    if (input.type === "agent.permission_requested" && input.permission) pending = [...pending, input.permission];
-    if (input.type === "agent.permission_resolved" && input.permission) {
-      pending = pending.filter((p) => p.requestId !== input.permission!.requestId);
     }
     const permission =
       input.type === "agent.permission_resolved" && input.permission
         ? (prev?.pendingPermissions.find((p) => p.requestId === input.permission!.requestId) ?? input.permission)
-        : input.permission;
+        : input.permission?.description
+          ? { ...input.permission, description: clip(input.permission.description, DESCRIPTION_CHARS) }
+          : input.permission;
+    let pending = prev?.pendingPermissions ?? [];
+    if (input.type === "agent.permission_requested" && permission) pending = [...pending, permission];
+    if (input.type === "agent.permission_resolved" && input.permission) {
+      pending = pending.filter((p) => p.requestId !== input.permission!.requestId);
+    }
     const inTurn =
       input.type === "agent.turn_started" ? true : input.type === "agent.turn_ended" || input.type === "agent.closed" ? false : prev?.inTurn;
     const requiresAttention =
@@ -288,6 +320,8 @@ export class EventHub {
               ? "closed"
               : undefined),
       labels: input.labels,
+      cwd: input.cwd ?? undefined,
+      provider: input.provider ?? undefined,
       requiresAttention,
       attentionReason,
       inTurn,
@@ -299,6 +333,7 @@ export class EventHub {
     });
 
     this.seq += 1;
+    const outcome = input.type === "agent.turn_ended" ? (input.outcome ?? "finished") : undefined;
     const event: AgentEvent = {
       id: `${this.epoch}:${this.seq}`,
       epoch: this.epoch,
@@ -309,9 +344,12 @@ export class EventHub {
       title: state.title,
       status: state.status,
       labels: state.labels,
+      cwd: state.cwd,
+      provider: state.provider,
       requiresAttention: state.requiresAttention,
       attentionReason: state.attentionReason,
-      ...(input.type === "agent.turn_ended" ? { outcome: input.outcome ?? "finished", error: input.error ?? null } : {}),
+      summary: summarize(input.type, state.title ?? input.agentId, { outcome, error: input.error, permission, resolution: input.resolution }),
+      ...(outcome ? { outcome, error: input.error ?? null } : {}),
       ...(permission ? { permission } : {}),
       ...(input.type === "agent.permission_resolved" ? { resolution: input.resolution ?? null } : {}),
       ...(input.preview && this.previewChars > 0
@@ -408,6 +446,39 @@ export class EventHub {
 
   listenerCount(): number {
     return this.listeners.size;
+  }
+}
+
+const DESCRIPTION_CHARS = 300;
+
+/** The one-line `summary` of an event. */
+export function summarize(
+  type: EventType,
+  name: string,
+  extra: { outcome?: TurnOutcome; error?: string | null; permission?: PermissionInfo; resolution?: "allow" | "deny" | null } = {},
+): string {
+  const agent = `Agent "${clip(name, 80)}"`;
+  const what = (p?: PermissionInfo) => (p ? `: ${clip(p.title || p.name || p.kind || p.requestId, 120)}` : "");
+  switch (type) {
+    case "agent.created":
+      return `${agent} was created`;
+    case "agent.turn_started":
+      return `${agent} started working`;
+    case "agent.turn_ended": {
+      const err = extra.error ? `: ${clip(extra.error, 160)}` : "";
+      if (extra.outcome === "error") return `${agent} failed${err}`;
+      if (extra.outcome === "limit") return `${agent} hit a usage limit${err}`;
+      if (extra.outcome === "canceled") return `${agent} was canceled`;
+      return `${agent} finished`;
+    }
+    case "agent.permission_requested":
+      return `${agent} needs permission${what(extra.permission)}`;
+    case "agent.permission_resolved":
+      return `${agent} permission ${extra.resolution === "allow" ? "allowed" : extra.resolution === "deny" ? "denied" : "resolved"}${what(extra.permission)}`;
+    case "agent.archived":
+      return `${agent} was archived`;
+    case "agent.closed":
+      return `${agent} closed`;
   }
 }
 

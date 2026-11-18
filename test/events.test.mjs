@@ -293,3 +293,60 @@ test("differ: a later snapshot does not undo a reported close or archive", () =>
   play(hub, snap({ status: "running" }));
   assert.ok(hub.publish({ type: "agent.closed", agentId: "a", source: "hook" }));
 });
+
+test("events carry cwd, provider, a summary and permission details", () => {
+  const hub = new EventHub({ epoch: "e" });
+  const c = hub.publish({ type: "agent.created", agentId: "a", title: "fix login", cwd: "/repo", provider: "claude", source: "hook" });
+  assert.equal(c.cwd, "/repo");
+  assert.equal(c.provider, "claude");
+  assert.equal(c.summary, 'Agent "fix login" was created');
+  const p = hub.publish({
+    type: "agent.permission_requested",
+    agentId: "a",
+    source: "hook",
+    permission: {
+      requestId: "r1", name: "Bash", title: "Run npm test", kind: "tool",
+      description: "x".repeat(1000),
+      actions: [{ id: "allow", label: "Allow", behavior: "allow" }],
+    },
+  });
+  assert.equal(p.summary, 'Agent "fix login" needs permission: Run npm test');
+  assert.equal(p.permission.description.length, 301, "clipped to 300 + …");
+  assert.deepEqual(p.permission.actions, [{ id: "allow", label: "Allow", behavior: "allow" }]);
+  assert.equal(p.cwd, "/repo", "kept from the agent's state");
+  const r = hub.publish({ type: "agent.permission_resolved", agentId: "a", source: "client", permission: { requestId: "r1", name: null, title: null, kind: null }, resolution: "deny" });
+  assert.equal(r.permission.title, "Run npm test", "resolved carries the details of the request");
+  assert.equal(r.summary, 'Agent "fix login" permission denied: Run npm test');
+  hub.publish({ type: "agent.turn_started", agentId: "a", source: "hook" });
+  assert.equal(hub.publish({ type: "agent.turn_ended", agentId: "a", source: "hook", outcome: "limit", error: "usage limit" }).summary, 'Agent "fix login" hit a usage limit: usage limit');
+  assert.equal(hub.publish({ type: "agent.archived", agentId: "a", source: "hook" }).summary, 'Agent "fix login" was archived');
+  const unnamed = hub.publish({ type: "agent.created", agentId: "b", source: "hook" });
+  assert.equal(unnamed.summary, 'Agent "b" was created');
+});
+
+test("snapshot differ passes cwd, provider and permission description/actions", () => {
+  const snap = {
+    id: "a", status: "idle", title: "t", labels: {}, cwd: "/w", provider: "codex",
+    pendingPermissions: [{ id: "r1", name: "Edit", kind: "tool", description: "edit a file", actions: [{ id: "ok", label: "OK", behavior: "allow", variant: "primary" }] }],
+  };
+  const out = diff(undefined, snap);
+  const req = out.find((e) => e.type === "agent.permission_requested");
+  assert.equal(req.cwd, "/w");
+  assert.equal(req.provider, "codex");
+  assert.equal(req.permission.description, "edit a file");
+  assert.deepEqual(req.permission.actions, [{ id: "ok", label: "OK", behavior: "allow" }]);
+  assert.equal(stateOf(snap).cwd, "/w");
+});
+
+test("differ: a new pending permission needs attention even if the snapshot flag lags", () => {
+  const hub = new EventHub({ epoch: "e" });
+  const running = { id: "a", status: "running", labels: {}, requiresAttention: false, pendingPermissions: [] };
+  for (const input of diff(undefined, running)) hub.publish(input);
+  hub.seed(stateOf(running));
+  const snap = { ...running, pendingPermissions: [{ id: "r1", name: "Bash", kind: "tool" }] };
+  const [req] = diff(hub.state("a"), snap).filter((e) => e.type === "agent.permission_requested");
+  const e = hub.publish(req);
+  assert.equal(e.requiresAttention, true);
+  assert.equal(e.attentionReason, "permission");
+  assert.equal(hub.since("e:0", { onlyNeedsAttention: true }).events.length, 1);
+});

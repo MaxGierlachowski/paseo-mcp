@@ -11,6 +11,7 @@ import {
   probeRpc,
   resumeWebhookRpc,
   rotateWebhookSecretRpc,
+  setWebhookHeadersRpc,
   statusRpc,
   stdioStatusRpc,
   testWebhookRpc,
@@ -18,6 +19,7 @@ import {
 } from "./shared/rpc.js";
 import { mcpSettings } from "./shared/settings.js";
 import { McpRuntime, type HookReport } from "./server/plugin/runtime.js";
+import type { PluginHookAgent } from "@getpaseo/plugin/server";
 import { syncLauncher } from "./server/plugin/launcher.js";
 import { probe, stdioStatus } from "./server/plugin/stdio.js";
 
@@ -30,6 +32,7 @@ export default function contribute(server: PluginServerContext) {
     console.warn(`paseo-mcp: settings are invalid, keeping the previous ones: ${state.error}`);
   };
 
+  const who = (agent: PluginHookAgent) => ({ agentId: agent.id, title: agent.title, cwd: agent.cwd, provider: agent.provider });
   // Hooks return at once; the event work runs in the background so no agent ever waits on it.
   const report = (r: HookReport, paseo: Parameters<McpRuntime["onHook"]>[1]) => {
     void runtime.onHook(r, paseo).catch((e: unknown) => console.warn({ err: e }, "paseo-mcp: hook event failed"));
@@ -38,36 +41,42 @@ export default function contribute(server: PluginServerContext) {
   const cleanups = [
     settings.subscribe(onSettings),
     server.addHook("agent.create.after", async ({ agent }, { paseo }) =>
-      report({ hook: "agent.create.after", agentId: agent.id, title: agent.title }, paseo),
+      report({ hook: "agent.create.after", ...who(agent) }, paseo),
     ),
     server.addHook("agent.turn.before", async ({ agent }, { paseo }) =>
-      report({ hook: "agent.turn.before", agentId: agent.id, title: agent.title }, paseo),
+      report({ hook: "agent.turn.before", ...who(agent) }, paseo),
     ),
     server.addHook("agent.turn.after", async ({ agent, outcome }, { paseo }) =>
-      report({ hook: "agent.turn.after", agentId: agent.id, title: agent.title, outcome }, paseo),
+      report({ hook: "agent.turn.after", ...who(agent), outcome }, paseo),
     ),
     server.addHook("agent.permission.before", async ({ agent, request }, { paseo }) =>
       report(
         {
           hook: "agent.permission.before",
-          agentId: agent.id,
-          title: agent.title,
-          request: { id: request.id, name: request.name, title: request.title ?? null, kind: request.kind },
+          ...who(agent),
+          request: {
+            id: request.id,
+            name: request.name,
+            title: request.title ?? null,
+            kind: request.kind,
+            description: request.description ?? null,
+            actions: request.actions,
+          },
         },
         paseo,
       ),
     ),
     server.addHook("agent.permission.after", async ({ agent, requestId, resolution }, { paseo }) =>
       report(
-        { hook: "agent.permission.after", agentId: agent.id, title: agent.title, requestId, behavior: resolution.behavior ?? null },
+        { hook: "agent.permission.after", ...who(agent), requestId, behavior: resolution.behavior ?? null },
         paseo,
       ),
     ),
     server.addHook("agent.archive.after", async ({ agent }, { paseo }) =>
-      report({ hook: "agent.archive.after", agentId: agent.id, title: agent.title }, paseo),
+      report({ hook: "agent.archive.after", ...who(agent) }, paseo),
     ),
     server.addHook("agent.close.after", async ({ agent }, { paseo }) =>
-      report({ hook: "agent.close.after", agentId: agent.id, title: agent.title }, paseo),
+      report({ hook: "agent.close.after", ...who(agent) }, paseo),
     ),
   ];
   void runtime.state
@@ -100,7 +109,8 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(createTokenRpc, (input) => newToken(input));
   server.handle(createWebhookRpc, (input) => runtime.createWebhook(input));
-  server.handle(rotateWebhookSecretRpc, ({ id }) => runtime.rotateWebhookSecret(id));
+  server.handle(rotateWebhookSecretRpc, ({ id, secret }) => runtime.rotateWebhookSecret(id, secret));
+  server.handle(setWebhookHeadersRpc, ({ id, headers }) => runtime.setWebhookHeaders(id, headers));
   server.handle(testWebhookRpc, ({ id }) => runtime.testWebhook(id));
   server.handle(resumeWebhookRpc, ({ id }) => runtime.resumeWebhook(id));
   server.handle(webhookStatusRpc, () => runtime.webhookStatus());

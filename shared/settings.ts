@@ -31,6 +31,10 @@ export const EVENT_TYPE_VALUES = [
   "agent.closed",
 ] as const;
 
+/** How deliveries are signed: paseo-mcp's own header, Standard Webhooks (Svix-compatible) or GitHub's. */
+export const SIGNATURE_SCHEME_VALUES = ["paseo", "standard-webhooks", "github"] as const;
+export type SignatureSchemeValue = (typeof SIGNATURE_SCHEME_VALUES)[number];
+
 export const WebhookSchema = z.object({
   id: z.string().min(1),
   label: z.string().trim().min(1).max(60),
@@ -42,8 +46,11 @@ export const WebhookSchema = z.object({
   onlyNeedsAttention: z.boolean().default(false),
   /** >0: bundle events arriving within this many milliseconds into one delivery. */
   batchMs: z.number().int().min(0).max(60_000).default(0),
+  signature: z.enum(SIGNATURE_SCHEME_VALUES).default("paseo"),
   /** Last four characters of the secret, to tell secrets apart. The secret stays on the daemon. */
   secretHint: z.string().max(8).optional(),
+  /** Names of the static headers sent with every delivery. Their values stay on the daemon, like the secret. */
+  headerNames: z.array(z.string()).default([]),
   createdAt: z.string(),
 });
 
@@ -72,6 +79,11 @@ export const McpSettingsSchema = z.object({
   defaultMode: z.string().optional(),
   /** Overrides the per-token default (the token label) for every token without its own origin. */
   originLabel: z.string().optional(),
+  /**
+   * Copies fields of a tools/call request's `_meta` onto the labels of agents it creates, e.g.
+   * {"conversationId": "origin_ref"}. Only for clients that send such fields; values are cut to 200 characters.
+   */
+  metaLabels: z.record(z.string(), z.string()).default({}),
   readOnly: z.boolean().default(false),
   events: z
     .object({

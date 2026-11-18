@@ -9,8 +9,8 @@ import { ListenError, startHttpServer, type McpHttpServer } from "../http.js";
 import { registerTools } from "../tools.js";
 import { registerAgentResources } from "../resources.js";
 import { EventHub, isLimitError, type EventFilter, type EventInput } from "../events.js";
-import { ClientEventSource, fetchPreview } from "../agent-source.js";
-import { WebhookDispatcher, checkWebhookUrl, generateSecret } from "../webhooks.js";
+import { ClientEventSource, fetchPreview, permissionActions } from "../agent-source.js";
+import { WebhookDispatcher, checkCustomHeaders, checkSecret, checkWebhookUrl, generateSecret, secretProblem } from "../webhooks.js";
 import { randomUUID } from "node:crypto";
 import type { PaseoApi } from "@getpaseo/client";
 import type { ToolConfig } from "../config.js";
@@ -25,7 +25,7 @@ import type { DeliveryView, McpStatus, WebhookStatusView } from "../../shared/rp
 import { LocalDaemon } from "./daemon.js";
 import { PluginState } from "./state.js";
 
-const VERSION = "0.3.0";
+import { VERSION } from "../version.js";
 /** A secret created but not yet saved into the settings survives clean-ups this long. */
 const PENDING_SECRET_MS = 10 * 60_000;
 
@@ -33,25 +33,38 @@ function tokenFilter(token: StoredToken): EventFilter | undefined {
   return token.labelFilter && Object.keys(token.labelFilter).length ? { labels: token.labelFilter } : undefined;
 }
 
+/** The agent fields every lifecycle hook passes. */
+interface HookAgent {
+  agentId: string;
+  title: string | null;
+  cwd?: string | null;
+  provider?: string | null;
+}
+
 /** What a lifecycle hook reports, in the shape index.server.ts passes on. */
-export type HookReport =
-  | { hook: "agent.create.after"; agentId: string; title: string | null }
-  | { hook: "agent.turn.before"; agentId: string; title: string | null }
-  | {
-      hook: "agent.turn.after";
-      agentId: string;
-      title: string | null;
-      outcome: { kind: "completed" } | { kind: "failed"; error: { message: string } } | { kind: "canceled"; reason: string };
-    }
-  | {
-      hook: "agent.permission.before";
-      agentId: string;
-      title: string | null;
-      request: { id: string; name?: string | null; title?: string | null; kind?: string | null };
-    }
-  | { hook: "agent.permission.after"; agentId: string; title: string | null; requestId: string; behavior: string | null }
-  | { hook: "agent.archive.after"; agentId: string; title: string | null }
-  | { hook: "agent.close.after"; agentId: string; title: string | null };
+export type HookReport = HookAgent &
+  (
+    | { hook: "agent.create.after" }
+    | { hook: "agent.turn.before" }
+    | {
+        hook: "agent.turn.after";
+        outcome: { kind: "completed" } | { kind: "failed"; error: { message: string } } | { kind: "canceled"; reason: string };
+      }
+    | {
+        hook: "agent.permission.before";
+        request: {
+          id: string;
+          name?: string | null;
+          title?: string | null;
+          kind?: string | null;
+          description?: string | null;
+          actions?: { id: string; label: string; behavior: "allow" | "deny" }[];
+        };
+      }
+    | { hook: "agent.permission.after"; requestId: string; behavior: string | null }
+    | { hook: "agent.archive.after" }
+    | { hook: "agent.close.after" }
+  );
 
 function listenKey(s: McpSettings): string {
   return s.http.enabled ? `${s.http.bind}|${s.http.port}` : "off";
@@ -72,6 +85,7 @@ function toolConfig(s: McpSettings): ToolConfig {
     defaultThinking: s.defaultThinking || undefined,
     defaultMode: s.defaultMode || undefined,
     originLabel: s.originLabel || "paseo-mcp",
+    metaLabels: s.metaLabels,
     readOnly: s.readOnly,
   };
 }
@@ -94,6 +108,7 @@ export class McpRuntime {
   readonly webhooks = new WebhookDispatcher({
     endpoints: () => this.settings.webhooks,
     secret: (id) => this.state.secret(id),
+    headers: (id) => this.state.headers(id),
     pauses: this.state,
     log: (m) => console.warn(`paseo-mcp: ${m}`),
   });
@@ -206,7 +221,14 @@ export class McpRuntime {
         // Publish what the hook said.
       }
     }
-    const base = { agentId, ...known, title: report.title ?? known.title ?? undefined, source: "hook" as const };
+    const base = {
+      agentId,
+      ...known,
+      title: report.title ?? known.title ?? undefined,
+      cwd: report.cwd ?? undefined,
+      provider: report.provider ?? undefined,
+      source: "hook" as const,
+    };
     let input: EventInput;
     switch (report.hook) {
       case "agent.create.after":
@@ -238,6 +260,8 @@ export class McpRuntime {
             name: report.request.name ?? null,
             title: report.request.title ?? null,
             kind: report.request.kind ?? null,
+            ...(report.request.description ? { description: report.request.description } : {}),
+            ...(permissionActions(report.request.actions) ? { actions: permissionActions(report.request.actions) } : {}),
           },
         };
         break;
@@ -261,12 +285,24 @@ export class McpRuntime {
 
   // ---------------------------------------------------------------- webhooks
 
-  createWebhook(input: Pick<StoredWebhook, "label" | "url" | "types" | "labels" | "onlyNeedsAttention" | "batchMs">) {
-    const urlError = checkWebhookUrl(input.url);
-    if (urlError) throw new Error(urlError);
+  createWebhook(
+    input: Pick<StoredWebhook, "label" | "url" | "types" | "labels" | "onlyNeedsAttention" | "batchMs"> & {
+      signature?: StoredWebhook["signature"];
+      secret?: string;
+      headers?: Record<string, string>;
+    },
+  ) {
+    const signature = input.signature ?? "paseo";
+    const problem =
+      checkWebhookUrl(input.url) ??
+      (input.secret !== undefined ? checkSecret(input.secret, signature) : null) ??
+      (input.headers ? checkCustomHeaders(input.headers) : null);
+    if (problem) throw new Error(problem);
     const id = randomUUID();
-    const secret = generateSecret();
+    const imported = input.secret !== undefined;
+    const secret = input.secret ?? generateSecret();
     this.state.setSecret(id, secret);
+    if (input.headers) this.state.setHeaders(id, input.headers);
     this.pendingSecrets.set(id, Date.now());
     const record: StoredWebhook = {
       id,
@@ -277,17 +313,33 @@ export class McpRuntime {
       labels: input.labels ?? {},
       onlyNeedsAttention: input.onlyNeedsAttention ?? false,
       batchMs: input.batchMs ?? 0,
+      signature,
       secretHint: secret.slice(-4),
+      headerNames: Object.keys(input.headers ?? {}),
       createdAt: new Date().toISOString(),
     };
-    return { secret, record };
+    // An imported secret is the receiver's; it is not sent back to the screen.
+    return { secret: imported ? "" : secret, imported, record };
   }
 
-  rotateWebhookSecret(id: string) {
-    if (!this.settings.webhooks.some((w) => w.id === id)) throw new Error("No such webhook");
-    const secret = generateSecret();
+  rotateWebhookSecret(id: string, given?: string) {
+    const webhook = this.settings.webhooks.find((w) => w.id === id);
+    if (!webhook) throw new Error("No such webhook");
+    if (given !== undefined) {
+      const problem = checkSecret(given, webhook.signature);
+      if (problem) throw new Error(problem);
+    }
+    const secret = given ?? generateSecret();
     this.state.setSecret(id, secret);
-    return { secret, secretHint: secret.slice(-4) };
+    return { secret: given !== undefined ? "" : secret, imported: given !== undefined, secretHint: secret.slice(-4) };
+  }
+
+  setWebhookHeaders(id: string, headers: Record<string, string>) {
+    if (!this.settings.webhooks.some((w) => w.id === id)) throw new Error("No such webhook; save the settings first");
+    const problem = checkCustomHeaders(headers);
+    if (problem) throw new Error(problem);
+    this.state.setHeaders(id, headers);
+    return { headerNames: Object.keys(headers) };
   }
 
   testWebhook(id: string): Promise<DeliveryView> {
@@ -303,7 +355,12 @@ export class McpRuntime {
   webhookStatus() {
     const webhooks: Record<string, WebhookStatusView> = {};
     for (const w of this.settings.webhooks) {
-      webhooks[w.id] = { ...this.webhooks.status(w.id), hasSecret: Boolean(this.state.secret(w.id)) };
+      const secret = this.state.secret(w.id);
+      webhooks[w.id] = {
+        ...this.webhooks.status(w.id),
+        hasSecret: Boolean(secret),
+        secretError: secret ? secretProblem(secret, w.signature) : null,
+      };
     }
     return {
       webhooks,

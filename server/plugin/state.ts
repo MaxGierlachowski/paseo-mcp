@@ -1,5 +1,5 @@
 // Daemon-side state the settings must not hold: when each token was last used, webhook secrets and
-// which webhooks are paused. The daemon side can read the settings but not write them, and secrets
+// custom header values, and which webhooks are paused. The daemon side can read the settings but not write them, and secrets
 // do not belong in a document every connected app can read. One file next to the daemon's other
 // state, readable by the owner only.
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -13,10 +13,12 @@ interface StateFile {
   lastUsed: Record<string, string>;
   webhookSecrets: Record<string, string>;
   webhookPaused: Record<string, boolean>;
+  /** Static header values per webhook; may hold credentials like the secrets. */
+  webhookHeaders: Record<string, Record<string, string>>;
 }
 
 export class PluginState implements PauseStore {
-  private data: StateFile = { lastUsed: {}, webhookSecrets: {}, webhookPaused: {} };
+  private data: StateFile = { lastUsed: {}, webhookSecrets: {}, webhookPaused: {}, webhookHeaders: {} };
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly path = join(paseoHome(), "paseo-mcp.json");
 
@@ -27,6 +29,7 @@ export class PluginState implements PauseStore {
         lastUsed: { ...(raw.lastUsed ?? {}), ...this.data.lastUsed },
         webhookSecrets: { ...(raw.webhookSecrets ?? {}), ...this.data.webhookSecrets },
         webhookPaused: { ...(raw.webhookPaused ?? {}), ...this.data.webhookPaused },
+        webhookHeaders: { ...(raw.webhookHeaders ?? {}), ...this.data.webhookHeaders },
       };
     } catch {
       // No file yet.
@@ -63,6 +66,16 @@ export class PluginState implements PauseStore {
     this.changed(true);
   }
 
+  headers(webhookId: string): Record<string, string> | undefined {
+    return this.data.webhookHeaders[webhookId];
+  }
+
+  setHeaders(webhookId: string, headers: Record<string, string>): void {
+    if (Object.keys(headers).length) this.data.webhookHeaders[webhookId] = { ...headers };
+    else delete this.data.webhookHeaders[webhookId];
+    this.changed(true);
+  }
+
   isPaused(webhookId: string): boolean {
     return this.data.webhookPaused[webhookId] === true;
   }
@@ -79,12 +92,21 @@ export class PluginState implements PauseStore {
     for (const id of Object.keys(this.data.lastUsed)) if (!tokenIds.has(id)) (delete this.data.lastUsed[id], (dirty = true));
     for (const id of Object.keys(this.data.webhookSecrets)) if (!webhookIds.has(id)) (delete this.data.webhookSecrets[id], (dirty = true));
     for (const id of Object.keys(this.data.webhookPaused)) if (!webhookIds.has(id)) (delete this.data.webhookPaused[id], (dirty = true));
+    for (const id of Object.keys(this.data.webhookHeaders)) if (!webhookIds.has(id)) (delete this.data.webhookHeaders[id], (dirty = true));
     if (dirty) this.changed();
   }
 
-  async flush(): Promise<void> {
+  private writing: Promise<void> = Promise.resolve();
+
+  /** Writes the file. Calls queue up: parallel writes would race on the same temporary file. */
+  flush(): Promise<void> {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.writing = this.writing.then(() => this.write());
+    return this.writing;
+  }
+
+  private async write(): Promise<void> {
     try {
       await mkdir(dirname(this.path), { recursive: true });
       const tmp = `${this.path}.tmp`;
