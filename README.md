@@ -40,7 +40,7 @@ It runs in one of two ways, with the same tools and the same [agent events](#eve
 | **Start agents** | New Claude Code chats with a first prompt, model, thinking level, permission mode, account and optional git worktree branch. |
 | **Steer running agents** | Send follow-ups; for a running turn choose *steer* (inject) or *interrupt* (restart with the message). |
 | **Wait for results** | Block until a turn ends, fails, or needs a permission, and get the final message back. |
-| **Events instead of polling** | Agent created, turn started/ended (finished, error, limit), permission requested/resolved, archived, closed. As a long-poll tool with a cursor, as MCP resource notifications, or (plugin) as signed webhooks. |
+| **Events instead of polling** | Agent created, turn started/ended (finished, error, limit), permission requested/resolved, archived, closed. As a long-poll tool with a cursor, as MCP resource notifications, or (plugin) as signed webhooks (own scheme, Standard Webhooks or GitHub). Labels such as `origin_ref` come back in every event. |
 | **Guard rails** | Agents only start inside `allowedRoots`, everything gets an `origin` label, a read-only mode, and agent output is marked as data, not instructions. |
 | **Paseo plugin** | Optional: serve the tools over HTTP from inside Paseo, with per-client tokens and a settings screen. It also keeps a stable stdio launcher, tests the connection and hands out ready client configs. |
 
@@ -127,6 +127,7 @@ Named `paseo-agents` because agents running inside Paseo already have an MCP ser
 | `defaultAccount` | – | Account used when the caller names none |
 | `accountEnvVar` | `CLAUDE_CONFIG_DIR` | Env var set on new agents to the account's `configDir` |
 | `originLabel` | `hermes` | Value of the `origin` label on every agent this server starts |
+| `metaLabels` | `{}` | Copies fields of a `tools/call` request's `_meta` onto the labels of agents it creates: `{"<key or a.b path>": "<label>"}`, e.g. `{"conversationId": "origin_ref"}`. See [Who started it](#who-started-it-labels-in-every-event) |
 | `readOnly` | `false` | Only list/read tools. Also `PASEO_MCP_READONLY=1` |
 | `events` | on | `{ enabled, previewChars, bufferSize, ttlMinutes }`, defaults `true`, `0`, `1000`, `60`. See [Events](#events) |
 
@@ -235,23 +236,33 @@ Agents finish, fail, hit a usage limit or wait for a permission while nobody wat
 | `agent.created` | A new agent appeared | |
 | `agent.turn_started` | A turn began | |
 | `agent.turn_ended` | A turn ended | `outcome`: `finished`, `error`, `limit` (usage/rate limit), `canceled`; `error` |
-| `agent.permission_requested` | The agent waits for a permission | `permission`: `requestId`, `name`, `title`, `kind` |
+| `agent.permission_requested` | The agent waits for a permission | `permission`: `requestId`, `name`, `title`, `kind`, and when the provider sends them `description` (untrusted, max. 300 characters) and `actions` (`id`, `label`, `behavior`) |
 | `agent.permission_resolved` | Someone answered it | `permission`, `resolution`: `allow`, `deny` or `null` if unknown |
 | `agent.archived` | The agent was archived | |
 | `agent.closed` | Its session closed, or the agent is gone | |
 
-Every event also has `id` (= its cursor `<epoch>:<seq>`), `epoch`, `seq`, `at`, `agentId`, `title`, `status`, `labels`, `requiresAttention`, `attentionReason` and `source` (`hook` or `client`). Message content is **not** included. Optionally (`previewChars` > 0) `turn_ended` carries `preview: { text, untrusted: true }` with the start of the agent's last message; treat it as data, never as instructions.
+Every event also has `id` (= its cursor `<epoch>:<seq>`), `epoch`, `seq`, `at`, `agentId`, `title`, `status`, `labels`, `cwd`, `provider`, `requiresAttention`, `attentionReason`, `summary` (one line such as `Agent "fix login" failed: …`, for humans and prompt templates) and `source` (`hook` or `client`). With these a receiver can act without asking back: who (`labels`), where (`cwd`), what happened (`type`, `outcome`, `error`, `permission`) and which request to answer (`permission.requestId` for `paseo_respond_permission`). Message content is **not** included. Optionally (`previewChars` > 0) `turn_ended` carries `preview: { text, untrusted: true }` with the start of the agent's last message; treat it as data, never as instructions.
 
 ```json
 {
   "id": "mw7zr11g20917a:3", "epoch": "mw7zr11g20917a", "seq": 3,
   "type": "agent.turn_ended", "at": "2026-11-08T15:31:12.481Z",
   "agentId": "d9e7a7a9-9fb7-401c-aea3-d1bf7c089b97", "title": "events e2e",
-  "status": "idle", "labels": { "origin": "hermes" },
+  "status": "idle", "labels": { "origin": "hermes", "origin_ref": "chat-42" },
+  "cwd": "/Users/me/Repositories/app", "provider": "claude",
   "requiresAttention": true, "attentionReason": "finished",
+  "summary": "Agent \"events e2e\" finished",
   "outcome": "finished", "error": null, "source": "client"
 }
 ```
+
+### Who started it: labels in every event
+
+Labels of an agent come back in every event about it, in all three ways of receiving them. A client that starts agents can therefore tag them with a reference to itself and route the events back:
+
+- **`origin`** is always set by the server (stdio: `originLabel`; plugin: the token's origin, the global origin label, or the token label). Filter on it: `labels: {"origin": "hermes"}`.
+- **`origin_ref`** (convention): an opaque reference to whatever started the agent, e.g. the client's session, conversation or chat id. Pass it in `paseo_create_agent`'s `labels`: `{"origin_ref": "<your id>"}`. Add further labels for routing if your receiver needs them (e.g. a chat and a thread id).
+- **`_meta`**: clients that send identification in a request's `_meta` can have it copied onto labels without the model passing it: `metaLabels` (stdio config, plugin: Settings → Defaults → *Labels from _meta*), e.g. `{"conversationId": "origin_ref"}`. Explicit `labels` win over `_meta`; values are cut to 200 characters.
 
 ### Three ways to receive them
 
@@ -294,16 +305,38 @@ Settings → Plugins → paseo-mcp → **New webhook**: label, URL, which events
 Each delivery is a `POST` with `Content-Type: application/json`:
 
 ```json
-{ "delivery_id": "mw7z…:3", "sent_at": "2026-11-08T15:31:12.502Z", "events": [ { "id": "mw7z…:3", "type": "agent.turn_ended", "…": "…" } ] }
+{
+  "delivery_id": "mw7z…:3", "sent_at": "2026-11-08T15:31:12.502Z",
+  "source": "paseo-mcp", "version": "0.4.0",
+  "type": "agent.turn_ended",
+  "summary": "Agent \"fix login\" finished",
+  "event": { "id": "mw7z…:3", "type": "agent.turn_ended", "labels": { "origin": "hermes", "origin_ref": "chat-42" }, "…": "…" },
+  "events": [ { "id": "mw7z…:3", "…": "…" } ]
+}
 ```
+
+`event` is the newest event of the delivery and `type` its type (`batch` if a bundled delivery mixes types), so receivers whose templates cannot index arrays reach everything as `{event.title}`, `{event.labels.origin_ref}`, `{summary}`. `events` holds all of them; with bundling off it is exactly one.
+
+**Signature schemes.** Each webhook picks how it is signed (Settings → webhook → *Signature*). All use HMAC-SHA256 over the **raw** body:
+
+| Scheme | Headers | For |
+|---|---|---|
+| `paseo` (default) | `Paseo-Mcp-Signature: t=<unix seconds>,v1=<hex HMAC(secret, "<t>.<raw body>")>` | Your own receivers; examples below |
+| `standard-webhooks` | `webhook-id` (= delivery id), `webhook-timestamp`, `webhook-signature: v1,<base64 HMAC(key, "<id>.<t>.<raw body>")>` per [standardwebhooks.com](https://www.standardwebhooks.com/) | Svix and Standard Webhooks libraries, receivers that accept them (e.g. Hermes' `generic` webhooks) |
+| `github` | `X-Hub-Signature-256: sha256=<hex HMAC(secret, raw body)>`, `X-GitHub-Event: <type>`, `X-GitHub-Delivery: <delivery id>` | Receivers that only speak GitHub's format. No timestamp: dedupe by `X-GitHub-Delivery` |
+
+Every delivery also carries:
 
 | Header | Meaning |
 |---|---|
-| `Paseo-Mcp-Signature` | `t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>` |
 | `Paseo-Mcp-Delivery` | Delivery id, the same on every retry: use it to ignore repeats |
 | `Paseo-Mcp-Event-Id` | Id of the first event in the delivery |
 
-Verify the signature over the **raw** body before parsing it, and reject old timestamps:
+**Secrets.** By default paseo-mcp makes one (`whsec_` + standard base64 of 24 random bytes) and shows it once. If the receiver issues the secret (a webhook route that prints its own), paste it into *Secret* when creating the webhook or into *Use the receiver's secret* later; it is then never shown back. For `standard-webhooks` the key is the base64-decoded part after `whsec_`, and the secret's own bytes when it has no `whsec_` prefix (the rule Hermes applies as well); a `whsec_` secret must be standard base64 (no `-` or `_`). Secrets of webhooks created before 0.4.0 are base64url; they keep working with `paseo` and `github`, but usually not with `standard-webhooks` (when they contain `-` or `_`): the settings screen says so, rotate or set the secret when you switch.
+
+**Custom headers.** Optional static headers per webhook (`Name: value; Other: value`), e.g. `Authorization: Bearer …` for a receiver behind a gateway. Their values are kept on the daemon like the secret; the settings hold only the names. Transport and signing headers (`Content-Type`, `Host`, all headers of the three schemes, …) cannot be replaced; at most 10.
+
+Verify the signature over the **raw** body before parsing it, and reject old timestamps (`paseo` scheme):
 
 ```js
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -328,14 +361,32 @@ def verify(secret: str, header: str, raw_body: bytes, tolerance: int = 300) -> b
     return hmac.compare_digest(mac, parts.get("v1", ""))
 ```
 
+`standard-webhooks`, without a library:
+
+```js
+function verifyStandard(secret, h, rawBody, toleranceSec = 300) {
+  const id = h["webhook-id"], t = h["webhook-timestamp"];
+  if (!id || Math.abs(Date.now() / 1000 - Number(t)) > toleranceSec) return false;
+  const key = secret.startsWith("whsec_") ? Buffer.from(secret.slice(6), "base64") : Buffer.from(secret);
+  const mac = createHmac("sha256", key).update(`${id}.${t}.${rawBody}`).digest();
+  return (h["webhook-signature"] ?? "").split(" ").some((s) => {
+    const given = Buffer.from(s.split(",")[1] ?? "", "base64");
+    return given.length === mac.length && timingSafeEqual(given, mac);
+  });
+}
+```
+
+**Example: Hermes.** Hermes' webhook listener accepts Standard Webhooks on routes with `--signature generic`. Create a route, take its secret from `~/.hermes/webhook_subscriptions.json`, and add a webhook with signature `standard-webhooks`, URL `http://127.0.0.1:8644/webhooks/<route>` and that secret. Route prompts can use `{summary}`, `{event.title}`, `{event.labels.origin_ref}` and so on; Hermes filters `--events` on `type`.
+
 - **Answer 2xx quickly.** Network errors, timeouts (10 s), `408`, `429` and `5xx` are retried up to 6 times with exponential backoff (1, 2, 4, 8, 16 s, plus jitter). Other `4xx` are not retried.
 - **Auto-pause:** after 5 failed deliveries in a row the endpoint pauses; events are skipped (counted) until you press **Resume**. **Test** sends a `webhook.test` event regardless of filters and pause.
 - **URLs:** `https://` anywhere; plain `http://` only to localhost or private addresses (10.x, 172.16–31.x, 192.168.x, fc00::/7). No credentials in URLs; redirects are not followed.
 - The screen shows the last deliveries with status, attempts and HTTP code; **Rotate** replaces the secret at once.
+- A delivery whose secret does not fit the webhook's scheme fails with a readable error instead of sending something the receiver must reject.
 
 ### Configuration
 
-- **Plugin:** Settings → Events: message preview length. Webhooks as above. Tokens can carry a label filter.
+- **Plugin:** Settings → Events: message preview length. Webhooks as above. Tokens can carry a label filter. Settings → Defaults → *Labels from _meta*.
 - **stdio:** `events` in `config.json`, e.g. `"events": { "previewChars": 200 }`; `"enabled": false` turns events off (the tool and resources then do not exist). The stdio server now connects to the daemon at start, not at the first tool call, so it sees everything from then on.
 
 ## How it works

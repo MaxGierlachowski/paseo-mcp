@@ -17,13 +17,14 @@ import {
   createWebhookRpc,
   resumeWebhookRpc,
   rotateWebhookSecretRpc,
+  setWebhookHeadersRpc,
   testWebhookRpc,
   webhookStatusRpc,
   type DeliveryView,
   type WebhookStatusView,
 } from "../shared/rpc.js";
-import { EVENT_TYPE_VALUES, type McpSettings, type StoredWebhook } from "../shared/settings.js";
-import { ago, parseLabels, plural } from "./format.js";
+import { EVENT_TYPE_VALUES, type McpSettings, type SignatureSchemeValue, type StoredWebhook } from "../shared/settings.js";
+import { ago, parseHeaders, parseLabels, plural } from "./format.js";
 import { Block, CodeBlock, SmallButton, type Colors } from "./parts.js";
 
 type Rpc = PluginCommandCapabilities["rpc"];
@@ -40,6 +41,18 @@ const PRESETS: Record<string, { label: string; types: EventType[]; onlyNeedsAtte
   turns: { label: "Turns (started, ended)", types: ["agent.turn_started", "agent.turn_ended"], onlyNeedsAttention: false },
   all: { label: "All events", types: [], onlyNeedsAttention: false },
 };
+
+const SCHEMES: Record<SignatureSchemeValue, { label: string; short: string }> = {
+  paseo: { label: "paseo-mcp (Paseo-Mcp-Signature)", short: "paseo-mcp signature" },
+  "standard-webhooks": { label: "Standard Webhooks (webhook-signature, Svix)", short: "Standard Webhooks" },
+  github: { label: "GitHub (X-Hub-Signature-256)", short: "GitHub signature" },
+};
+
+const SCHEME_OPTIONS = Object.entries(SCHEMES).map(([value, s]) => ({ value: value as SignatureSchemeValue, label: s.label }));
+
+function asScheme(v: string): SignatureSchemeValue {
+  return v in SCHEMES ? (v as SignatureSchemeValue) : "paseo";
+}
 
 function filterText(w: StoredWebhook): string {
   const parts = [w.types.length ? w.types.map((t) => t.replace("agent.", "")).join(", ") : "all events"];
@@ -61,7 +74,36 @@ function deliveryText(d: DeliveryView): string {
   return `${ago(d.at)} · ${what} · ${result}`;
 }
 
-export function verifySnippet(): string {
+export function verifySnippet(scheme: SignatureSchemeValue = "paseo"): string {
+  if (scheme === "standard-webhooks") {
+    return [
+      'import { createHmac, timingSafeEqual } from "node:crypto";',
+      "",
+      "// h = request headers, body = the raw request body (string). Or use any Standard Webhooks library.",
+      "function verify(secret, h, body) {",
+      '  const id = h["webhook-id"], t = h["webhook-timestamp"];',
+      "  if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false;",
+      '  const key = secret.startsWith("whsec_") ? Buffer.from(secret.slice(6), "base64") : Buffer.from(secret);',
+      '  const mac = createHmac("sha256", key).update(`${id}.${t}.${body}`).digest();',
+      '  return (h["webhook-signature"] ?? "").split(" ").some((s) => {',
+      '    const given = Buffer.from(s.split(",")[1] ?? "", "base64");',
+      "    return given.length === mac.length && timingSafeEqual(given, mac);",
+      "  });",
+      "}",
+    ].join("\n");
+  }
+  if (scheme === "github") {
+    return [
+      'import { createHmac, timingSafeEqual } from "node:crypto";',
+      "",
+      "// header = request.headers['x-hub-signature-256'], body = the raw request body (string)",
+      "function verify(secret, header, body) {",
+      '  const mac = Buffer.from("sha256=" + createHmac("sha256", secret).update(body).digest("hex"));',
+      '  const given = Buffer.from(header ?? "");',
+      "  return given.length === mac.length && timingSafeEqual(given, mac);",
+      "}",
+    ].join("\n");
+  }
   return [
     'import { createHmac, timingSafeEqual } from "node:crypto";',
     "",
@@ -85,8 +127,9 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
 }) {
   const toast = useToast();
   const [status, setStatus] = useState<{ webhooks: Record<string, WebhookStatusView>; events: { cursor: string; sources: string[] } } | null>(null);
-  const [secret, setSecret] = useState<{ label: string; secret: string } | null>(null);
+  const [secret, setSecret] = useState<{ label: string; secret: string; scheme: SignatureSchemeValue } | null>(null);
   const [preset, setPreset] = useState<keyof typeof PRESETS>("attention");
+  const [scheme, setScheme] = useState<SignatureSchemeValue>("paseo");
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -130,20 +173,27 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
     if (labels === null) return toast.error("Labels: key=value, separated by commas");
     const batchMs = Number((draft.current.whBatch ?? "0").trim() || "0");
     if (!Number.isInteger(batchMs) || batchMs < 0 || batchMs > 60_000) return toast.error("Bundling must be 0–60000 ms");
+    const headers = parseHeaders(draft.current.whHeaders ?? "");
+    if (headers === null) return toast.error("Headers: Name: value, separated by semicolons");
+    const given = draft.current.whSecret?.trim();
     const p = PRESETS[preset];
     setBusy("create");
     try {
-      const { secret, record } = await rpc(createWebhookRpc, {
+      const { secret, imported, record } = await rpc(createWebhookRpc, {
         label,
         url,
         types: p.types,
         labels,
         onlyNeedsAttention: p.onlyNeedsAttention,
         batchMs,
+        signature: scheme,
+        ...(given ? { secret: given } : {}),
+        ...(Object.keys(headers).length ? { headers } : {}),
       });
       if (await update((next) => void next.webhooks.push(record))) {
-        setSecret({ label, secret });
-        for (const k of ["whLabel", "whUrl", "whLabels", "whBatch"]) clear(k);
+        if (imported) toast.show(`${label} signs with the secret you entered`, { variant: "success" });
+        else setSecret({ label, secret, scheme });
+        for (const k of ["whLabel", "whUrl", "whLabels", "whBatch", "whSecret", "whHeaders"]) clear(k);
         void refresh();
       }
     } catch (e) {
@@ -151,6 +201,27 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function setOwnSecret(w: StoredWebhook) {
+    const key = `secret:${w.id}`;
+    const given = draft.current[key]?.trim();
+    if (!given) return toast.error("Paste the secret first");
+    await act(w.id, async () => {
+      const r = await rpc(rotateWebhookSecretRpc, { id: w.id, secret: given });
+      if (await update((next) => void (next.webhooks.find((x) => x.id === w.id)!.secretHint = r.secretHint), "Secret set")) clear(key);
+    });
+  }
+
+  async function saveHeaders(w: StoredWebhook) {
+    const key = `headers:${w.id}`;
+    const headers = parseHeaders(draft.current[key] ?? "");
+    if (headers === null) return toast.error("Headers: Name: value, separated by semicolons");
+    await act(w.id, async () => {
+      const r = await rpc(setWebhookHeadersRpc, { id: w.id, headers });
+      const done = r.headerNames.length ? `Headers: ${r.headerNames.join(", ")}` : "Custom headers removed";
+      if (await update((next) => void (next.webhooks.find((x) => x.id === w.id)!.headerNames = r.headerNames), done)) clear(key);
+    });
   }
 
   async function act(id: string, work: () => Promise<unknown>) {
@@ -192,7 +263,7 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
 
       <SettingsSection
         title="Webhooks"
-        info="POSTs events to your endpoints, signed with HMAC-SHA256 (header Paseo-Mcp-Signature: t=…,v1=…). Retries with backoff; an endpoint pauses after 5 failed deliveries in a row."
+        info="POSTs events to your endpoints, signed with HMAC-SHA256: paseo-mcp's own header, Standard Webhooks (Svix-compatible) or GitHub's, per endpoint. Retries with backoff; an endpoint pauses after 5 failed deliveries in a row."
       >
         <SettingsCard>
           {secret ? (
@@ -206,7 +277,7 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
               </Block>
               <SettingsRow label="Verify deliveries" hint="Node.js; the README has more languages." />
               <Block>
-                <CodeBlock colors={colors} text={verifySnippet()} copyLabel="Copy verify example" />
+                <CodeBlock colors={colors} text={verifySnippet(secret.scheme)} copyLabel="Copy verify example" />
               </Block>
               <SettingsAction label="Copied it" actionLabel="Hide secret" onPress={() => setSecret(null)} />
             </>
@@ -222,11 +293,13 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
                 : last
                   ? `Last: ${deliveryText(last)}`
                   : "No deliveries yet";
-            const hint = [w.url, filterText(w), `secret …${w.secretHint ?? "????"}`, state].join("\n");
+            const extras = w.headerNames.length ? ` · headers ${w.headerNames.join(", ")}` : "";
+            const hint = [w.url, filterText(w), `${SCHEMES[w.signature].short} · secret …${w.secretHint ?? "????"}${extras}`, state].join("\n");
+            const secretError = st ? (!st.hasSecret ? "No secret on the daemon; rotate it" : st.secretError) : null;
             const isBusy = busy === w.id;
             return (
               <Fragment key={w.id}>
-                <SettingsRow label={w.label} hint={hint} error={st && !st.hasSecret ? "No secret on the daemon; rotate it" : null}>
+                <SettingsRow label={w.label} hint={hint} error={secretError}>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: 8, maxWidth: 260 }}>
                     <SmallButton colors={colors} label="Test" disabled={isBusy} onPress={() =>
                       void act(w.id, async () => {
@@ -257,13 +330,38 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
                       />
                     ))}
                     {st?.deliveries.length ? null : <SettingsRow label="No deliveries yet" />}
+                    <SettingsSelect
+                      label="Signature"
+                      hint="Pick what the receiver checks. Standard Webhooks with a whsec_ secret needs standard base64 after the prefix."
+                      value={w.signature}
+                      options={SCHEME_OPTIONS}
+                      onValueChange={(v) => void update((next) => void (next.webhooks.find((x) => x.id === w.id)!.signature = asScheme(v)), `Signs with ${SCHEMES[asScheme(v)].short}`)}
+                    />
+                    <SettingsInput
+                      ref={ref(`secret:${w.id}`)}
+                      label="Use the receiver's secret"
+                      hint="For receivers that issue the secret themselves (e.g. a webhook route that prints one). Replaces the current secret."
+                      placeholder="whsec_… or the receiver's secret"
+                      secureTextEntry
+                      onChangeText={field(`secret:${w.id}`)}
+                    />
+                    <SettingsAction label="" actionLabel="Set secret" disabled={isBusy} onPress={() => void setOwnSecret(w)} />
+                    <SettingsInput
+                      ref={ref(`headers:${w.id}`)}
+                      label="Custom headers"
+                      hint={`Sent with every delivery and kept on the daemon like the secret. Now: ${w.headerNames.length ? w.headerNames.join(", ") : "none"}. Saving replaces all; save empty to remove.`}
+                      placeholder="Authorization: Bearer …; X-Tenant: a"
+                      secureTextEntry
+                      onChangeText={field(`headers:${w.id}`)}
+                    />
+                    <SettingsAction label="" actionLabel="Save headers" disabled={isBusy} onPress={() => void saveHeaders(w)} />
                     <SettingsRow label="Secret" hint="Rotating stops the old secret at once.">
                       <View style={{ flexDirection: "row", gap: 8 }}>
                         <SmallButton colors={colors} label="Rotate" disabled={isBusy} onPress={() =>
                           void act(w.id, async () => {
                             const r = await rpc(rotateWebhookSecretRpc, { id: w.id });
                             await update((next) => void (next.webhooks.find((x) => x.id === w.id)!.secretHint = r.secretHint));
-                            setSecret({ label: w.label, secret: r.secret });
+                            setSecret({ label: w.label, secret: r.secret, scheme: w.signature });
                           })
                         } />
                         {confirmDelete === w.id ? (
@@ -308,6 +406,29 @@ export function EventsSection({ rpc, colors, values, saving, update }: {
             hint="Optional, key=value separated by commas"
             placeholder="origin=hermes"
             onChangeText={field("whLabels")}
+          />
+          <SettingsSelect
+            label="Signature"
+            hint="How the receiver checks deliveries. Standard Webhooks works with Svix libraries and receivers like Hermes' generic webhooks."
+            value={scheme}
+            options={SCHEME_OPTIONS}
+            onValueChange={(v) => setScheme(asScheme(v))}
+          />
+          <SettingsInput
+            ref={ref("whSecret")}
+            label="Secret"
+            hint="Optional. Empty: paseo-mcp makes one and shows it once. Or paste the secret your receiver issued."
+            placeholder="generate"
+            secureTextEntry
+            onChangeText={field("whSecret")}
+          />
+          <SettingsInput
+            ref={ref("whHeaders")}
+            label="Custom headers"
+            hint="Optional, Name: value separated by semicolons. Kept on the daemon like the secret."
+            placeholder="Authorization: Bearer …"
+            secureTextEntry
+            onChangeText={field("whHeaders")}
           />
           <SettingsInput
             ref={ref("whBatch")}

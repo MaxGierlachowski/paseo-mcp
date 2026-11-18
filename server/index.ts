@@ -14,6 +14,7 @@ import { errText, registerTools } from "./tools.js";
 import { EventHub } from "./events.js";
 import { ClientEventSource, fetchPreview } from "./agent-source.js";
 import { registerAgentResources } from "./resources.js";
+import { VERSION } from "./version.js";
 
 const cfg: Config = loadConfig();
 
@@ -85,7 +86,7 @@ const hub = cfg.events.enabled
 const source = hub ? new ClientEventSource({ hub, paseo, preview: fetchPreview }) : undefined;
 source?.start();
 
-const server = new McpServer({ name: "paseo", version: "0.3.0" });
+const server = new McpServer({ name: "paseo", version: VERSION });
 if (hub) registerAgentResources(server, { events: hub, paseo });
 registerTools(server, { config: () => cfg, paseo, events: hub });
 

@@ -169,7 +169,11 @@ export function makeMcpSettings(rpc: Rpc) {
 
     async function saveDefaults() {
       const keys = ["defaultProvider", "defaultThinking", "defaultMode", "originLabel", "accountEnvVar"] as const;
+      const metaText = take("metaLabels");
+      const metaLabels = metaText === undefined ? undefined : parseLabels(metaText);
+      if (metaLabels === null) return toast.error("Labels from _meta: metaKey=label, separated by commas");
       const ok = await update((next) => {
+        if (metaLabels) next.metaLabels = metaLabels;
         for (const key of keys) {
           const text = take(key);
           if (text === undefined) continue;
@@ -179,7 +183,7 @@ export function makeMcpSettings(rpc: Rpc) {
           else delete next[key];
         }
       }, "Saved");
-      if (ok) for (const key of keys) delete draft.current[key];
+      if (ok) for (const key of [...keys, "metaLabels"]) delete draft.current[key];
     }
 
     async function addRoot() {
@@ -475,6 +479,14 @@ export function makeMcpSettings(rpc: Rpc) {
               initialValue={values.originLabel ?? ""}
               placeholder="token label"
               onChangeText={field("originLabel")}
+            />
+            <SettingsInput
+              ref={ref("metaLabels")}
+              label="Labels from _meta"
+              hint="Optional, metaKey=label separated by commas: copies fields a client sends in a tools/call _meta onto the labels of agents it creates, so they come back in every event."
+              initialValue={Object.entries(values.metaLabels).map(([k, v]) => `${k}=${v}`).join(", ")}
+              placeholder="conversationId=origin_ref"
+              onChangeText={field("metaLabels")}
             />
             <SettingsInput
               ref={ref("accountEnvVar")}

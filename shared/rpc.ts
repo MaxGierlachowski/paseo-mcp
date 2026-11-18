@@ -96,6 +96,8 @@ export const probeRpc = defineRpc({ name: "mcp.stdio.probe", input: z.object({})
 
 // ---------------------------------------------------------------- webhooks
 
+const HeadersSchema = z.record(z.string(), z.string());
+
 const WebhookInputSchema = WebhookSchema.pick({
   label: true,
   url: true,
@@ -103,23 +105,40 @@ const WebhookInputSchema = WebhookSchema.pick({
   labels: true,
   onlyNeedsAttention: true,
   batchMs: true,
+}).extend({
+  signature: WebhookSchema.shape.signature.optional(),
+  /** Use this secret instead of generating one, e.g. the one the receiver issued. */
+  secret: z.string().optional(),
+  /** Static headers sent with every delivery; the daemon keeps the values. */
+  headers: HeadersSchema.optional(),
 });
 
 /**
- * Creates a webhook: the daemon checks the URL, makes an id and a secret and keeps the secret. The
- * screen saves the returned record into the settings and shows the secret once.
+ * Creates a webhook: the daemon checks the URL, makes an id and a secret (or takes the given one)
+ * and keeps the secret and header values. The screen saves the returned record into the settings
+ * and shows a generated secret once.
  */
 export const createWebhookRpc = defineRpc({
   name: "mcp.webhooks.create",
   input: WebhookInputSchema,
-  output: z.object({ secret: z.string(), record: WebhookSchema }),
+  output: z.object({ secret: z.string(), imported: z.boolean(), record: WebhookSchema }),
 });
 
-/** A new secret for an existing webhook; the old one stops working at once. */
+/**
+ * A new secret for an existing webhook; the old one stops working at once. With `secret`, that one
+ * is used (imported from the receiver) and not echoed back.
+ */
 export const rotateWebhookSecretRpc = defineRpc({
   name: "mcp.webhooks.rotate",
-  input: z.object({ id: z.string().min(1) }),
-  output: z.object({ secret: z.string(), secretHint: z.string() }),
+  input: z.object({ id: z.string().min(1), secret: z.string().optional() }),
+  output: z.object({ secret: z.string(), imported: z.boolean(), secretHint: z.string() }),
+});
+
+/** Replaces the static headers of a webhook. Returns the names for the settings. */
+export const setWebhookHeadersRpc = defineRpc({
+  name: "mcp.webhooks.headers",
+  input: z.object({ id: z.string().min(1), headers: HeadersSchema }),
+  output: z.object({ headerNames: z.array(z.string()) }),
 });
 
 const DeliverySchema = z.object({
@@ -154,6 +173,8 @@ export const WebhookStatusSchema = z.object({
   consecutiveFailures: z.number(),
   dropped: z.number(),
   hasSecret: z.boolean(),
+  /** Why the stored secret does not work with the endpoint's signature scheme, if it does not. */
+  secretError: z.string().nullable(),
   deliveries: z.array(DeliverySchema),
 });
 

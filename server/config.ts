@@ -29,6 +29,8 @@ const ConfigSchema = z.object({
   accountEnvVar: z.string().default("CLAUDE_CONFIG_DIR"),
   /** Label written on every agent this server creates, so you can filter them in Paseo. */
   originLabel: z.string().default("hermes"),
+  /** Copies fields of a tools/call `_meta` onto new agents' labels: {"<metaKey or a.b path>": "<label>"}. */
+  metaLabels: z.record(z.string(), z.string()).default({}),
   /** true = only list/read tools are exposed. */
   readOnly: z.boolean().default(false),
   /** Agent events: paseo_wait_for_events and the paseo://agents resources. */

@@ -66,3 +66,14 @@ export function parseLabels(text: string): Record<string, string> | null {
   }
   return out;
 }
+
+/** "Name: value; Other: value" (or one per line) → {Name:"value", …}; "" → {}; null when malformed. */
+export function parseHeaders(text: string): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const part of text.split(/[;\n]/).map((p) => p.trim()).filter(Boolean)) {
+    const i = part.indexOf(":");
+    if (i <= 0 || i === part.length - 1) return null;
+    out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}

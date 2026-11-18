@@ -64,14 +64,29 @@ function fail(message: string) {
 }
 
 /** Wraps a tool body so thrown errors become MCP tool errors instead of crashes. */
-export function safe<A>(fn: (args: A) => Promise<ReturnType<typeof ok>>) {
-  return async (args: A) => {
+export function safe<A, E = unknown>(fn: (args: A, extra: E) => Promise<ReturnType<typeof ok>>) {
+  return async (args: A, extra: E) => {
     try {
-      return await fn(args);
+      return await fn(args, extra);
     } catch (e) {
       return fail(errText(e));
     }
   };
+}
+
+const META_LABEL_CHARS = 200;
+
+/** Labels taken from the request's `_meta` per config.metaLabels ({metaKey: labelName}); dotted keys walk objects. */
+export function labelsFromMeta(meta: unknown, mapping: Readonly<Record<string, string>> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!mapping || !meta || typeof meta !== "object") return out;
+  for (const [key, label] of Object.entries(mapping)) {
+    let value: unknown = meta;
+    for (const part of key.split(".")) value = value && typeof value === "object" ? (value as Record<string, unknown>)[part] : undefined;
+    if (typeof value === "number" || typeof value === "boolean") value = String(value);
+    if (typeof value === "string" && value.trim() && label.trim()) out[label.trim()] = value.trim().slice(0, META_LABEL_CHARS);
+  }
+  return out;
 }
 
 function clip(text: string, max: number): string {
@@ -390,11 +405,16 @@ export function registerTools(server: McpServer, ctx: ToolContext): string[] {
           .string()
           .optional()
           .describe("If set, run in a new git worktree on this new branch"),
-        labels: z.record(z.string(), z.string()).optional(),
+        labels: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'Labels on the new agent. They come back in every event of this agent (paseo_wait_for_events, webhooks), so put a reference to yourself here, e.g. {"origin_ref":"<your session or chat id>"}. "origin" is set by the server.',
+          ),
       },
       annotations: { destructiveHint: false, openWorldHint: true },
     },
-    safe(async (args) => {
+    safe(async (args, extra: { _meta?: unknown }) => {
       const config = cfg();
       // Settings can switch readOnly on while a session is open.
       if (config.readOnly) throw new Error("paseo-mcp is in read-only mode");
@@ -405,7 +425,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): string[] {
       const accountName = args.account ?? config.defaultAccount;
       const env: Record<string, string> = {};
       const origin = ctx.originLabel?.() ?? config.originLabel;
-      const labels: Record<string, string> = { ...(args.labels ?? {}), origin };
+      const labels: Record<string, string> = { ...labelsFromMeta(extra?._meta, config.metaLabels), ...(args.labels ?? {}), origin };
       if (accountName) {
         const acc = config.accounts[accountName];
         if (!acc) throw new Error(`Unknown account "${accountName}". Use paseo_list_accounts.`);
