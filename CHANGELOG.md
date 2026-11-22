@@ -12,7 +12,7 @@ Paseo 0.17 and headless Linux hosts.
 - **Release tarball:** `npm run release:tarball` builds `dist/paseo-mcp-<version>.tgz` (top-level
   `paseo-mcp/`) and a `sha256sum`-format `.sha256`. Self-contained (plugin sources, built stdio server,
   production `node_modules`, no native modules), so `paseo plugin install <dir>` and
-  `node <dir>/dist/index.js` work offline on any platform. Reproducible from the same commit.
+  `node <dir>/dist/index.js` work offline on any platform. The same commit and tar give the same bytes.
 - **Managed settings file** for hosts without the Paseo app: `$PASEO_HOME/paseo-mcp.managed.json`
   (or `PASEO_MCP_MANAGED`) turns the HTTP server on and adds tokens and webhooks; watched and applied
   live, its values win over the settings screen, which shows that it is in use.
