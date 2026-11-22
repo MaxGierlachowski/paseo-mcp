@@ -6,7 +6,7 @@
 
 An MCP server that gives Hermes, Claude Code or any other MCP client access to the coding agents running in your local Paseo: list them, read what they did, start new ones, send follow-ups, wait for results, answer permission requests.
 
-[![Paseo](https://img.shields.io/badge/Paseo-%E2%89%A5%200.15-111827?style=flat-square)](https://paseo.sh)
+[![Paseo](https://img.shields.io/badge/Paseo-0.17-111827?style=flat-square)](https://paseo.sh)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%7C%20HTTP-6B46C1?style=flat-square)](https://modelcontextprotocol.io)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A5%2022-339933?style=flat-square)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-Apache%202.0-2563EB?style=flat-square)](LICENSE)
@@ -27,9 +27,9 @@ It runs in one of two ways, with the same tools and the same [agent events](#eve
 |---|---|---|
 | Runs as | a child process of your MCP client | part of the Paseo daemon |
 | Transport | stdin/stdout | Streamable HTTP at `http://127.0.0.1:6790/mcp` |
-| Configured in | `~/.config/paseo-mcp/config.json` | Settings → Plugins → paseo-mcp |
+| Configured in | `~/.config/paseo-mcp/config.json` | Settings → Plugins → paseo-mcp, or a [managed settings file](#managed-settings-file) on headless hosts |
 | Access | whoever can start the process | a bearer token per client, scoped `read` or `full` |
-| Set up | [Install](#install), or the plugin's launcher `~/.local/bin/paseo-mcp` | [Plugin mode](#plugin-mode) |
+| Set up | [Install](#install), or the plugin's launcher `~/.local/bin/paseo-mcp` | [Plugin mode](#plugin-mode), [Headless Linux](#headless-linux--agentbox) |
 
 ## Features
 
@@ -66,9 +66,9 @@ Resources: `paseo://agents` (all active agents) and `paseo://agents/{id}` (one a
 
 ## Requirements
 
-- [Paseo](https://paseo.sh) **0.15 or newer**, running (desktop app or `paseo daemon start`)
-- Node **22 or newer**
-- For plugin mode: plugins enabled in Paseo, and `npm` on the daemon's `PATH` (Paseo runs `npm ci` once on install)
+- [Paseo](https://paseo.sh) **0.17** (`@getpaseo/*` 0.17.3), running (desktop app, `paseo daemon start`, or `paseo daemon run` on a headless host)
+- Node **22 or newer** (CI runs 24)
+- For plugin mode: plugins enabled in Paseo (`pluginsEnabled: true`). A Git install needs `npm` on the daemon's `PATH` (Paseo runs the build once); the [release tarball](#headless-linux--agentbox) needs neither npm nor network
 - An MCP client: [Hermes](https://hermes-agent.nousresearch.com), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), …
 
 ## Install
@@ -96,7 +96,7 @@ mcp_servers:
     command: "node"
     args: ["/path/to/paseo-mcp/dist/index.js"]
     env:
-      PASEO_MCP_CONFIG: "/Users/<you>/.config/paseo-mcp/config.json"
+      PASEO_MCP_CONFIG: "/home/you/.config/paseo-mcp/config.json"
     timeout: 300          # paseo_wait_for_agent blocks up to timeout_sec
     connect_timeout: 30
 ```
@@ -120,7 +120,7 @@ Named `paseo-agents` because agents running inside Paseo already have an MCP ser
 | `daemonUrl` | `ws://127.0.0.1:6767/ws` | WebSocket of the Paseo daemon |
 | `password` | – | Daemon password, if set. `PASEO_PASSWORD` wins. Without one, the server signs in with `$PASEO_HOME/local-credential` (loopback daemons only), like the `paseo` CLI |
 | `allowedRoots` | **required** | Agents may only start inside these folders (symlinks resolved) |
-| `defaultProvider` | – | `provider/model`, e.g. `claude/claude-sonnet-5-5`. Check with `paseo_list_models` |
+| `defaultProvider` | – | `provider/model`, e.g. `claude/claude-sonnet-5-5`. Check with `paseo_list_models`. A bare provider (`claude`) uses its default model |
 | `defaultThinking` | – | e.g. `low`, `medium`, `high` |
 | `defaultMode` | – | Permission mode: `auto`, `default`, `acceptEdits`, `plan` |
 | `accounts` | `{}` | Name → `{ configDir, note? }`, one entry per Claude login |
@@ -152,7 +152,7 @@ Installed as a Paseo plugin, paseo-mcp serves the same tools over [Streamable HT
 paseo plugin install github:MaxGierlachowski/paseo-mcp
 ```
 
-On macOS the CLI ships inside the app: `/Applications/Paseo.app/Contents/Resources/bin/paseo`. Paseo asks you to trust the plugin (plugins run unsandboxed), clones it, runs `npm ci --omit=dev` and loads it. Plugins must be enabled (`"pluginsEnabled": true` in `~/.paseo/config.json`). The HTTP server stays **off** until you turn it on.
+On macOS the CLI ships inside the app: `/Applications/Paseo.app/Contents/Resources/bin/paseo`. Paseo asks you to trust the plugin (plugins run unsandboxed), clones it, runs the build from `paseo-plugin.json` (`npm ci`, `npm run build`, `npm prune --omit=dev`) and loads it. Without network or npm on the host, install the [release tarball](#headless-linux--agentbox) instead. Plugins must be enabled (`"pluginsEnabled": true` in `~/.paseo/config.json`). The HTTP server stays **off** until you turn it on.
 
 If another plugin already uses the id `paseo-mcp` (for example the earlier local "Paseo MCP for Hermes" build), Paseo refuses the install; remove that one first or pass `--id`. This plugin covers everything the local build did and takes over its launcher.
 
@@ -227,6 +227,182 @@ The stdio server keeps its own config file (`~/.config/paseo-mcp/config.json`); 
 - **DNS rebinding.** The `Host` header must name the server itself (loopback names, or the bind address) and an `Origin` header, if sent, must point at it too; otherwise `403`. Request bodies are capped at 1 MiB (`413`).
 - **Same guard rails as stdio.** `allowedRoots` is checked on the daemon side, every started agent gets `origin=<token's origin label>`, and permission requests are never answered automatically.
 
+## Headless Linux / agentbox
+
+On a server without the Paseo app (for example an [agentbox](https://github.com/MaxGierlachowski/agentbox) host), install the plugin from the release tarball and configure it with a file instead of the settings screen. Everything below runs in CI on Ubuntu 24.04 (x64 and arm64) against a real daemon, see [`scripts/linux-smoke.sh`](scripts/linux-smoke.sh).
+
+### Release tarball
+
+Each GitHub release has `paseo-mcp-<version>.tgz` and `paseo-mcp-<version>.tgz.sha256` (`sha256sum` format). The tarball unpacks to one directory, `paseo-mcp/`, and is self-contained: the plugin sources Paseo compiles itself, the built stdio server and admin CLI (`dist/`), and the production `node_modules`. All dependencies are plain JavaScript, so the same tarball serves x64 and arm64. Installing needs no network and no npm. Build it yourself with `npm run release:tarball`.
+
+| Path in the tarball | What |
+|---|---|
+| `paseo-mcp/` | The plugin directory for `paseo plugin install` |
+| `paseo-mcp/dist/index.js` | The stdio MCP server (`node …/dist/index.js`) |
+| `paseo-mcp/dist/admin.js` | `paseo-mcp-admin`: tokens in the managed settings file |
+| `paseo-mcp/smoke.mjs` | A minimal MCP client to test the stdio server |
+
+### Install
+
+As the user the daemon runs as, with Node 24 on the `PATH` (paths are examples; agentbox uses `/home/agentbox/.paseo` and `/opt/agentbox/vendor/paseo-mcp/<version>/`):
+
+```sh
+npm install --global @getpaseo/cli@0.17.3
+export PASEO_HOME=/home/agentbox/.paseo
+
+# Daemon: loopback only, no relay, no web UI, plugins on
+paseo daemon config set daemon.listen 127.0.0.1:6767
+paseo daemon config set daemon.relay.enabled false
+paseo daemon config set features.webUi.enabled false
+paseo daemon config set daemon.mcp.injectIntoAgents true
+paseo daemon config set daemon.browserTools.enabled false
+paseo daemon config set pluginsEnabled true
+paseo daemon run            # foreground; ExecStart of a systemd unit
+
+# Plugin, from the release tarball
+V=0.5.0
+curl -fsSLO "https://github.com/MaxGierlachowski/paseo-mcp/releases/download/v$V/paseo-mcp-$V.tgz"
+curl -fsSLO "https://github.com/MaxGierlachowski/paseo-mcp/releases/download/v$V/paseo-mcp-$V.tgz.sha256"
+sha256sum -c "paseo-mcp-$V.tgz.sha256"
+mkdir -p "/opt/paseo-mcp/$V" && tar -xzf "paseo-mcp-$V.tgz" -C "/opt/paseo-mcp/$V"
+paseo plugin install "/opt/paseo-mcp/$V/paseo-mcp"      # non-interactive; prints a trust notice on stderr
+paseo plugin ls paseo-mcp                                # STATUS running
+```
+
+Without `pluginsEnabled: true` the daemon accepts the install but never starts the plugin. `paseo daemon config set` writes `$PASEO_HOME/config.json`; set the keys before the daemon starts or restart it. A directory install runs the plugin in place (no build step, no copy), and the plugin directory may be read-only: at runtime the plugin writes only under `$PASEO_HOME` (`paseo-mcp.json` with token "last used" times and webhook pause flags) and its stdio launcher `~/.local/bin/paseo-mcp`.
+
+**Updates:** unpack the new version next to the old one, then `paseo plugin remove paseo-mcp && paseo plugin install /opt/paseo-mcp/<new>/paseo-mcp`. `remove` deletes the settings saved by the screen, not the managed settings file, so tokens and webhooks from the file survive.
+
+### Managed settings file
+
+The plugin reads `$PASEO_HOME/paseo-mcp.managed.json` (another path via `PASEO_MCP_MANAGED` in the daemon's environment) next to the settings the screen saves. It checks the file every 2 seconds and applies changes live: turning the server on, adding or revoking a token (its sessions close at once), adding a webhook. No daemon restart or plugin reload is needed. Keys the file sets win over the screen; tokens and webhooks from the file are added to the screen's (and not listed there). An invalid file is reported in the plugin log (`paseo plugin logs paseo-mcp`) and on the screen, and the last valid one stays in effect. Keep it mode `600`; it holds webhook secrets.
+
+```json
+{
+  "http": { "enabled": true, "port": 6790, "bind": "127.0.0.1" },
+  "allowedRoots": ["/home/agentbox/work"],
+  "originLabel": "hermes",
+  "accounts": { "main": { "configDir": "/home/agentbox/.claude-accounts/main" } },
+  "defaultAccount": "main",
+  "defaultProvider": "claude",
+  "tokens": [
+    { "id": "hermes-ui", "label": "hermes-ui", "scope": "full", "hash": "<hex sha256 of the token>", "origin": "hermes" },
+    { "id": "bridge", "label": "hermes-paseo-bridge", "scope": "read", "hash": "…", "labelFilter": { "origin": "hermes" } }
+  ],
+  "webhooks": [
+    {
+      "id": "bridge",
+      "label": "hermes-paseo-bridge",
+      "url": "http://127.0.0.1:8644/webhooks/paseo",
+      "signature": "standard-webhooks",
+      "secret": "whsec_…",
+      "types": ["agent.turn_ended", "agent.permission_requested", "agent.closed"],
+      "labels": { "origin": "hermes" }
+    }
+  ]
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `http` | `enabled` (default off), `port` (default `6790`), `bind` (default `127.0.0.1`) |
+| `tokens[]` | `label` (required), `scope` `read` or `full` (required), exactly one of `hash` (hex SHA-256 of the token) or `token` (the token itself), optional `id` (default: the label; letters, digits, `.`, `_`, `-`), `origin` (label on agents it creates), `labelFilter` (only events and resources of agents with these labels), `createdAt` |
+| `webhooks[]` | `label`, `url`, `secret` (required); `id` (default: the label), `signature` `paseo` (default), `standard-webhooks` or `github`, `types` (event types, empty = all), `labels` (only agents with these labels), `onlyNeedsAttention`, `batchMs` (bundle window, 0–60000), `headers` (static headers, e.g. `Authorization`), `enabled` (default `true`). Same rules as [Webhooks](#webhooks-plugin-mode) |
+| `allowedRoots`, `accounts`, `defaultAccount`, `accountEnvVar`, `defaultProvider`, `defaultThinking`, `defaultMode`, `originLabel`, `metaLabels`, `readOnly` | As in the [stdio config](#configuration); replace the screen's values |
+| `events` | `{ "previewChars": n }` |
+
+Unknown keys are an error, so typos do not pass silently.
+
+### Tokens, non-interactively
+
+`paseo-mcp-admin` (`node <dir>/dist/admin.js`) edits the `tokens` of the managed file. It finds the file like the plugin does (`--file`, else `$PASEO_MCP_MANAGED`, else `$PASEO_HOME/paseo-mcp.managed.json`), so run it with the daemon's `PASEO_HOME`:
+
+```sh
+PM=/opt/paseo-mcp/0.5.0/paseo-mcp
+export PASEO_HOME=/home/agentbox/.paseo
+node $PM/dist/admin.js token create --label hermes-ui --scope full --origin hermes --out /run/secrets/paseo-mcp-hermes-ui
+node $PM/dist/admin.js token create --id bridge --label hermes-paseo-bridge --scope read --label-filter origin=hermes   # prints the token once on stdout
+node $PM/dist/admin.js token create --label hermes-ui --scope full --replace   # rotate
+node $PM/dist/admin.js token list            # ids, scopes, labels; never hashes
+node $PM/dist/admin.js token revoke bridge
+node $PM/dist/admin.js check                 # validates the whole file, exit 1 if invalid
+printf %s "$TOKEN" | node $PM/dist/admin.js hash   # hex SHA-256 for a "hash" entry
+```
+
+A token is `pmcp_` + 43 base64url characters, printed once (or written to `--out` with mode `600`) and stored only as its SHA-256. Tools with their own secret store can instead generate any random string of at least 24 characters and write it as `"token"` (or its SHA-256 as `"hash"`) into the file themselves. The other keys of the file are left alone.
+
+A client then needs only:
+
+```sh
+PASEO_MCP_URL=http://127.0.0.1:6790/mcp     # http://<bind>:<port>/mcp
+PASEO_MCP_TOKEN=pmcp_…                       # sent as "Authorization: Bearer <token>"
+```
+
+The endpoint speaks [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) (POST JSON-RPC, `Accept: application/json, text/event-stream`, then `Mcp-Session-Id`). A request without a valid token gets `401`. The `Host` header must be a loopback name with the port (`127.0.0.1:6790`, `localhost:6790`); a reverse proxy in front must pass it through unchanged or bind the plugin to the proxy's address. A quick check:
+
+```sh
+curl -sS -X POST http://127.0.0.1:6790/mcp \
+  -H "Authorization: Bearer $PASEO_MCP_TOKEN" -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+### stdio for Hermes
+
+The stdio server connects to the daemon itself and signs in with `$PASEO_HOME/local-credential` (loopback daemons only), so it needs the daemon's `PASEO_HOME` (default `~/.paseo`) and a config file:
+
+```yaml
+# $HERMES_HOME/config.yaml
+mcp_servers:
+  paseo:
+    command: "node"
+    args: ["/opt/paseo-mcp/0.5.0/paseo-mcp/dist/index.js"]
+    env:
+      PASEO_MCP_CONFIG: "/home/agentbox/.config/paseo-mcp/config.json"
+      PASEO_HOME: "/home/agentbox/.paseo"
+    timeout: 300
+    connect_timeout: 30
+```
+
+```json
+{
+  "daemonUrl": "ws://127.0.0.1:6767/ws",
+  "allowedRoots": ["/home/agentbox/work"],
+  "originLabel": "hermes",
+  "accounts": {
+    "main": { "configDir": "/home/agentbox/.claude-accounts/main", "note": "Main account" },
+    "second": { "configDir": "/home/agentbox/.claude-accounts/second" }
+  },
+  "defaultAccount": "main",
+  "accountEnvVar": "CLAUDE_CONFIG_DIR",
+  "defaultProvider": "claude",
+  "metaLabels": {},
+  "readOnly": false,
+  "events": { "enabled": true, "previewChars": 0, "bufferSize": 1000, "ttlMinutes": 60 }
+}
+```
+
+All keys are described under [Configuration](#configuration); only `allowedRoots` is required. Test it exactly like a client starts it:
+
+```sh
+cd /opt/paseo-mcp/0.5.0/paseo-mcp
+env -i PATH="$PATH" HOME=/home/agentbox PASEO_HOME=/home/agentbox/.paseo \
+  PASEO_MCP_CONFIG=/home/agentbox/.config/paseo-mcp/config.json \
+  node smoke.mjs paseo_list_accounts 'paseo_list_agents={"limit":5}'
+```
+
+`TOOLS (11): …` and a JSON agent list mean it works. `paseo_wait_for_events` needs `events.enabled` (default on).
+
+### Events to a receiver
+
+For a receiver on the same host (for example Hermes' webhook platform, or a bridge that resumes the session that started an agent):
+
+- **Webhook:** an entry in `webhooks` of the managed file. URL: `http://127.0.0.1:<port>/<path>` (plain `http` only to loopback and private addresses). Signature: `standard-webhooks` for Hermes' `generic` routes and Standard Webhooks libraries (`webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<base64 HMAC-SHA256(key, "<id>.<t>.<raw body>")>`, key = base64-decoded part after `whsec_`), `paseo` for your own receivers (`Paseo-Mcp-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`), or `github` (`X-Hub-Signature-256`). Every delivery also has `Paseo-Mcp-Delivery` (same on retries; dedupe on it). Details and verification code: [Webhooks](#webhooks-plugin-mode).
+- **Long-poll:** a `read` token and `paseo_wait_for_events` with a cursor over `PASEO_MCP_URL`, see [Three ways to receive them](#three-ways-to-receive-them). A token with `labelFilter` only sees its own agents.
+- **Who started it:** the creator passes `labels: {"origin_ref": "<its session id>"}` to `paseo_create_agent` (or the server copies `_meta` fields with `metaLabels`). `origin` is set from the token (`origin`, else `originLabel`, else the token label) or, over stdio, from `originLabel`. Both come back in every event (`event.labels.origin_ref`) and every webhook delivery, so the receiver routes without asking back.
+
+Which events a receiver usually wants: `agent.turn_ended` (`outcome`: `finished`, `error`, `limit`, `canceled`), `agent.permission_requested` (answer with `paseo_respond_permission` and `permission.requestId`) and `agent.closed`. Hook and push events can arrive in either order (for example `permission_resolved` after `turn_ended`); sort by `seq`.
+
 ## Events
 
 Agents finish, fail, hit a usage limit or wait for a permission while nobody watches. Instead of polling `paseo_list_agents`, a client can be told. Both modes collect the same events:
@@ -249,7 +425,7 @@ Every event also has `id` (= its cursor `<epoch>:<seq>`), `epoch`, `seq`, `at`, 
   "type": "agent.turn_ended", "at": "2026-11-08T15:31:12.481Z",
   "agentId": "d9e7a7a9-9fb7-401c-aea3-d1bf7c089b97", "title": "events e2e",
   "status": "idle", "labels": { "origin": "hermes", "origin_ref": "chat-42" },
-  "cwd": "/Users/me/Repositories/app", "provider": "claude",
+  "cwd": "/home/you/work/app", "provider": "claude",
   "requiresAttention": true, "attentionReason": "finished",
   "summary": "Agent \"events e2e\" finished",
   "outcome": "finished", "error": null, "source": "client"
@@ -295,7 +471,7 @@ It returns at once when events are pending, otherwise when the first matching on
 
 ### Webhooks (plugin mode)
 
-Settings → Plugins → paseo-mcp → **New webhook**: label, URL, which events (needs attention / turns / all), optional label filter, optional bundling window. The secret is shown **once**. It is kept on the daemon (`$PASEO_HOME/paseo-mcp.json`, mode 600); the settings hold only its last four characters.
+Settings → Plugins → paseo-mcp → **New webhook** (headless: an entry in the [managed settings file](#managed-settings-file)): label, URL, which events (needs attention / turns / all), optional label filter, optional bundling window. The secret is shown **once**. It is kept on the daemon (`$PASEO_HOME/paseo-mcp.json`, mode 600); the settings hold only its last four characters.
 
 <p align="center">
   <img src="docs/plugin-events.png" alt="Events and webhooks on the settings screen" width="460">
@@ -307,7 +483,7 @@ Each delivery is a `POST` with `Content-Type: application/json`:
 ```json
 {
   "delivery_id": "mw7z…:3", "sent_at": "2026-11-08T15:31:12.502Z",
-  "source": "paseo-mcp", "version": "0.4.0",
+  "source": "paseo-mcp", "version": "0.5.0",
   "type": "agent.turn_ended",
   "summary": "Agent \"fix login\" finished",
   "event": { "id": "mw7z…:3", "type": "agent.turn_ended", "labels": { "origin": "hermes", "origin_ref": "chat-42" }, "…": "…" },
@@ -430,6 +606,8 @@ Starting agents with repository and tool access is powerful. Keep in mind:
 npm run build                          # compile server/ to dist/
 npm test                               # build, then unit and HTTP integration tests
 npm run typecheck                      # the plugin entry points and settings screen
+npm run release:tarball                # dist/paseo-mcp-<version>.tgz + .sha256, see below
+scripts/linux-smoke.sh dist/paseo-mcp-0.5.0.tgz   # Linux: real daemon + plugin + stdio from the tarball
 SMOKE_COMMAND=~/.local/bin/paseo-mcp npm run smoke   # same, through the launcher
 PASEO_MCP_CONFIG=~/.config/paseo-mcp/config.json \
   npm run smoke -- paseo_list_accounts 'paseo_list_agents={"limit":5}'
@@ -439,7 +617,7 @@ PASEO_MCP_CONFIG=~/.config/paseo-mcp/config.json \
 
 Layout: `server/` holds the tools (`tools.ts`), the HTTP transport (`http.ts`, `auth.ts`) and the stdio entry (`index.ts`, built to `dist/index.js`); `server/plugin/` the daemon side of the plugin; `shared/` the settings and RPC contracts; `client/` the settings screen. `index.server.ts` and `index.client.tsx` are the plugin entry points, compiled by Paseo itself. To try the plugin from a checkout, run `npm ci --ignore-scripts && npm run build && npm prune --omit=dev` in a copy of it (a directory install skips the manifest's build step, a git install runs exactly these) and `paseo plugin install <dir>`; test against a separate daemon with `--home <tmp-dir>` rather than your everyday one.
 
-Tested against Paseo daemon 0.15 and `@getpaseo/client` 0.15.
+Tested against Paseo daemon 0.17.3 and `@getpaseo/client` 0.17.3, on macOS and, in CI, on headless Ubuntu 24.04 (x64 and arm64) with `scripts/linux-smoke.sh`.
 
 Internals of the plugin are in [OVERVIEW.md](OVERVIEW.md), changes in [CHANGELOG.md](CHANGELOG.md).
 

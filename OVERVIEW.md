@@ -4,7 +4,7 @@ The README covers installing and using paseo-mcp. This page is for reading the c
 
 ## Two entry points, one set of tools
 
-- `server/tools.ts` registers the ten `paseo_*` tools on any `McpServer`. It gets a config getter,
+- `server/tools.ts` registers the eleven `paseo_*` tools on any `McpServer`. It gets a config getter,
   a function returning a connected `PaseoApi`, and a scope.
 - `server/index.ts` is the stdio server (`dist/index.js`): config file, one `@getpaseo/client`
   connection, stdin/stdout.
@@ -32,6 +32,32 @@ not write it, so:
 Every change runs through one queue: enable/port/bind restart the listener, removed or changed
 tokens lose their sessions, a readOnly switch closes all sessions (their tool set is fixed at
 initialize). Everything else is read on each tool call.
+
+## Managed settings (`server/managed.ts`, `server/admin.ts`)
+
+Hosts without the Paseo app have no settings screen, and the daemon side cannot write the settings
+document. So the plugin also reads a JSON file it does not own, `$PASEO_HOME/paseo-mcp.managed.json`
+(`PASEO_MCP_MANAGED`), polled with `fs.watchFile` every 2 s:
+
+- `resolveManaged` validates it (strict zod schema, the same URL/secret/header rules as the screen),
+  hashes plain tokens, and splits webhook secrets and header values off the records;
+- `mergeManaged` lays it over the screen's settings: scalar keys from the file win, tokens and
+  webhooks are appended with ids prefixed `managed:`; the runtime applies the merged document through
+  the same queue as a screen change, so revoked tokens lose their sessions at once;
+- an invalid file is logged and reported in the status RPC; the previous valid one stays in effect;
+- secrets of managed webhooks are looked up in the file, never copied into the state file, and the
+  rotate/headers RPCs refuse managed ids.
+
+`dist/admin.js` (`paseo-mcp-admin`) edits only `tokens` of that file, validating the result before an
+atomic write (mode 600).
+
+## Release tarball (`scripts/release-tarball.mjs`)
+
+Stages the plugin sources, `dist/*.js` and `npm ci --omit=dev` output in a temp directory outside the
+repo, fails on native modules or install scripts, bundles both plugin entries with esbuild the way
+Paseo 0.17 does (externals: the SDK and `zod`) to prove they resolve inside the tarball, starts the
+staged stdio server and lists its tools, then packs a sorted file list with fixed times and owners
+through Node's gzip. `scripts/linux-smoke.sh` tests the result against a real headless daemon.
 
 ## Reaching the daemon
 
