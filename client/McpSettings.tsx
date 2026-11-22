@@ -208,7 +208,10 @@ export function makeMcpSettings(rpc: Rpc) {
     const url = status?.url ?? connectUrl(values.http.bind, values.http.port);
     const snippetToken = created?.token ?? TOKEN_PLACEHOLDER;
     const shownBind = bindDraft ?? values.http.bind;
-    const statusLabel = !values.http.enabled
+    // A managed settings file (headless installs) can turn the server on without the switch.
+    const enabled = status?.enabled ?? values.http.enabled;
+    const managed = status?.managed;
+    const statusLabel = !enabled
       ? "Off"
       : status?.listening
         ? `Listening on ${status.url}`
@@ -236,9 +239,16 @@ export function makeMcpSettings(rpc: Rpc) {
             />
             <SettingsRow
               label={statusLabel}
-              hint={values.http.enabled && status?.listening ? plural(openSessions, "open session") : undefined}
-              error={values.http.enabled ? status?.error : null}
+              hint={enabled && status?.listening ? plural(openSessions, "open session") : undefined}
+              error={enabled ? status?.error : null}
             />
+            {managed && (managed.loaded || managed.error) ? (
+              <SettingsRow
+                label="Managed settings file"
+                hint={`${managed.path}: ${plural(managed.tokens, "token")}, ${plural(managed.webhooks, "webhook")}. Its values win over this screen and are not listed here.`}
+                error={managed.error}
+              />
+            ) : null}
             <SettingsInput
               ref={ref("port")}
               label="Port"

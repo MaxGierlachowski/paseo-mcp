@@ -21,7 +21,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "paseo-mcp": "dist/index.js"
+    "paseo-mcp": "dist/index.js",
+    "paseo-mcp-admin": "dist/admin.js"
   },
   "files": [
     "dist/",

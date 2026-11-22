@@ -12,6 +12,8 @@ import { EventHub, isLimitError, type EventFilter, type EventInput } from "../ev
 import { ClientEventSource, fetchPreview, permissionActions } from "../agent-source.js";
 import { WebhookDispatcher, checkCustomHeaders, checkSecret, checkWebhookUrl, generateSecret, secretProblem } from "../webhooks.js";
 import { randomUUID } from "node:crypto";
+import { unwatchFile, watchFile } from "node:fs";
+import { isManagedId, loadManaged, managedPath, mergeManaged, type ManagedConfig } from "../managed.js";
 import type { PaseoApi } from "@getpaseo/client";
 import type { ToolConfig } from "../config.js";
 import {
@@ -28,6 +30,8 @@ import { PluginState } from "./state.js";
 import { VERSION } from "../version.js";
 /** A secret created but not yet saved into the settings survives clean-ups this long. */
 const PENDING_SECRET_MS = 10 * 60_000;
+/** How often the managed settings file is checked for changes. */
+const MANAGED_POLL_MS = 2_000;
 
 function tokenFilter(token: StoredToken): EventFilter | undefined {
   return token.labelFilter && Object.keys(token.labelFilter).length ? { labels: token.labelFilter } : undefined;
@@ -91,7 +95,14 @@ function toolConfig(s: McpSettings): ToolConfig {
 }
 
 export class McpRuntime {
+  /** What the plugin runs with: the screen's settings merged with the managed file. */
   private settings: McpSettings = McpSettingsSchema.parse({});
+  /** The settings document as the screen saved it. */
+  private uiSettings: McpSettings = McpSettingsSchema.parse({});
+  private managed: ManagedConfig | null = null;
+  private managedError: string | null = null;
+  private readonly managedFile = managedPath();
+  private watching = false;
   private server: McpHttpServer | null = null;
   private error: string | null = null;
   private queue: Promise<void> = Promise.resolve();
@@ -107,8 +118,8 @@ export class McpRuntime {
   });
   readonly webhooks = new WebhookDispatcher({
     endpoints: () => this.settings.webhooks,
-    secret: (id) => this.state.secret(id),
-    headers: (id) => this.state.headers(id),
+    secret: (id) => this.secretOf(id),
+    headers: (id) => (isManagedId(id) ? this.managed?.headers.get(id) : this.state.headers(id)),
     pauses: this.state,
     log: (m) => console.warn(`paseo-mcp: ${m}`),
   });
@@ -117,18 +128,59 @@ export class McpRuntime {
 
   constructor() {
     this.hub.subscribe((event) => this.webhooks.handle(event));
+    // Read before the first settings apply, so the listener does not start twice.
+    this.readManaged();
   }
 
   /** Starts the push source; events flow even while the HTTP server is off (webhooks). */
   start(): void {
     this.source.start();
+    if (!this.watching && !this.stopped) {
+      this.watching = true;
+      watchFile(this.managedFile, { interval: MANAGED_POLL_MS, persistent: false }, () => {
+        if (this.readManaged()) void this.enqueue();
+      });
+    }
   }
 
-  /** Applies a new settings document. Calls run one after another. */
+  private secretOf(id: string): string | undefined {
+    return isManagedId(id) ? this.managed?.secrets.get(id) : this.state.secret(id);
+  }
+
+  /** Loads the managed file; an invalid file keeps the previous one. True when something changed. */
+  private readManaged(): boolean {
+    const result = loadManaged(this.managedFile);
+    if (result.status === "invalid") {
+      if (this.managedError !== result.error) console.warn(`paseo-mcp: managed settings ignored: ${result.error}`);
+      const changed = this.managedError !== result.error;
+      this.managedError = result.error;
+      return changed;
+    }
+    this.managedError = null;
+    const next = result.status === "ready" ? result.config : null;
+    if (next || this.managed) {
+      console.info(
+        next
+          ? `paseo-mcp: managed settings from ${this.managedFile}: ${next.tokens.length} token(s), ${next.webhooks.length} webhook(s)`
+          : `paseo-mcp: managed settings file ${this.managedFile} is gone`,
+      );
+    }
+    this.managed = next;
+    return true;
+  }
+
+  /** Applies a new settings document from the screen. Calls run one after another. */
   apply(next: McpSettings): Promise<void> {
-    this.queue = this.queue.then(() => this.applyNow(next)).catch((e) => {
-      console.error({ err: e }, "paseo-mcp: applying settings failed");
-    });
+    this.uiSettings = next;
+    return this.enqueue();
+  }
+
+  private enqueue(): Promise<void> {
+    this.queue = this.queue
+      .then(() => this.applyNow(mergeManaged(this.uiSettings, this.managed)))
+      .catch((e) => {
+        console.error({ err: e }, "paseo-mcp: applying settings failed");
+      });
     return this.queue;
   }
 
@@ -323,6 +375,7 @@ export class McpRuntime {
   }
 
   rotateWebhookSecret(id: string, given?: string) {
+    if (isManagedId(id)) throw new Error("This webhook comes from the managed settings file; change it there");
     const webhook = this.settings.webhooks.find((w) => w.id === id);
     if (!webhook) throw new Error("No such webhook");
     if (given !== undefined) {
@@ -335,6 +388,7 @@ export class McpRuntime {
   }
 
   setWebhookHeaders(id: string, headers: Record<string, string>) {
+    if (isManagedId(id)) throw new Error("This webhook comes from the managed settings file; change it there");
     if (!this.settings.webhooks.some((w) => w.id === id)) throw new Error("No such webhook; save the settings first");
     const problem = checkCustomHeaders(headers);
     if (problem) throw new Error(problem);
@@ -355,7 +409,7 @@ export class McpRuntime {
   webhookStatus() {
     const webhooks: Record<string, WebhookStatusView> = {};
     for (const w of this.settings.webhooks) {
-      const secret = this.state.secret(w.id);
+      const secret = this.secretOf(w.id);
       webhooks[w.id] = {
         ...this.webhooks.status(w.id),
         hasSecret: Boolean(secret),
@@ -378,11 +432,20 @@ export class McpRuntime {
       error: this.error,
       sessions,
       lastUsed: this.state.lastUsed(),
+      managed: {
+        path: this.managedFile,
+        loaded: this.managed !== null,
+        tokens: this.managed?.tokens.length ?? 0,
+        webhooks: this.managed?.webhooks.length ?? 0,
+        error: this.managedError,
+      },
     };
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.watching) unwatchFile(this.managedFile);
+    this.watching = false;
     await this.queue;
     await this.server?.close();
     this.server = null;
