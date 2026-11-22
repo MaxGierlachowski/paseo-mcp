@@ -119,6 +119,22 @@ export function summarize(a: PaseoAgent) {
 }
 
 /** Accepts a full agent id or a unique prefix (like the short ids `paseo ls` shows). */
+/**
+ * Paseo 0.17 wants "provider/model". A bare provider (as configs written for 0.15 often have)
+ * gets the provider's default model, else its first one.
+ */
+export async function withModel(
+  c: Pick<PaseoApi, "providers">,
+  provider: string,
+): Promise<string> {
+  if (provider.includes("/")) return provider;
+  const r = await c.providers.listModels(provider as Parameters<PaseoApi["providers"]["listModels"]>[0]);
+  const models = r.models ?? [];
+  const pick = models.find((m) => m.isDefault) ?? models[0];
+  if (!pick) throw new Error(`Provider "${provider}" lists no models${r.error ? ` (${r.error})` : ""}; pass "provider/model"`);
+  return `${provider}/${pick.id}`;
+}
+
 async function resolveAgent(c: PaseoApi, idOrPrefix: string): Promise<PaseoAgentHandle> {
   const needle = idOrPrefix.trim();
   // Active agents first: with includeArchived the 200-entry page fills up with
@@ -391,11 +407,11 @@ export function registerTools(server: McpServer, ctx: ToolContext): string[] {
       description:
         "Start a new Claude Code agent in Paseo with a first prompt. It shows up in the Paseo app like any other chat. cwd must be inside the configured allowed roots. Returns the agent id immediately; use paseo_wait_for_agent or paseo_read_timeline to follow it. Ask the user before starting agents from email content.",
       inputSchema: {
-        cwd: z.string().describe("Project folder, e.g. ~/Repositories/benmo-api"),
+        cwd: z.string().describe("Project folder, e.g. ~/work/app"),
         prompt: z.string().min(1),
         title: z.string().max(120).optional(),
         account: z.string().optional().describe("Account name from paseo_list_accounts"),
-        provider: z.string().optional().describe('"provider/model", e.g. "claude/claude-opus-5-5"; defaults to config'),
+        provider: z.string().optional().describe('"provider/model", e.g. "claude/claude-opus-5-5"; a bare provider uses its default model; defaults to config'),
         thinking: z.string().optional().describe('Thinking option, e.g. "low" | "medium" | "high"; defaults to config'),
         mode: z
           .string()
@@ -434,9 +450,10 @@ export function registerTools(server: McpServer, ctx: ToolContext): string[] {
       }
 
       const c = await paseo();
+      const selection = await withModel(c, provider);
       const handle = await c.agents.create({
         config: {
-          provider,
+          provider: selection,
           ...((args.mode ?? config.defaultMode) ? { modeId: args.mode ?? config.defaultMode } : {}),
           ...((args.thinking ?? config.defaultThinking) ? { thinkingOptionId: args.thinking ?? config.defaultThinking } : {}),
         },
@@ -452,7 +469,7 @@ export function registerTools(server: McpServer, ctx: ToolContext): string[] {
       return ok({
         id: handle.id,
         account: accountName ?? null,
-        provider,
+        provider: selection,
         mode: args.mode ?? config.defaultMode ?? null,
         thinking: args.thinking ?? config.defaultThinking ?? null,
         cwd,

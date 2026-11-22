@@ -149,10 +149,10 @@ export function resolveManaged(raw: unknown): ManagedConfig {
   if (file.defaultAccount && file.accounts && !file.accounts[file.defaultAccount]) {
     throw new Error(`defaultAccount "${file.defaultAccount}" is not in accounts`);
   }
-  const seen = new Set<string>();
-  const unique = (kind: string, id: string) => {
-    if (seen.has(id)) throw new Error(`two ${kind}s with the id "${id.slice(MANAGED_ID_PREFIX.length)}"`);
-    seen.add(id);
+  const seen = { token: new Set<string>(), webhook: new Set<string>() };
+  const unique = (kind: keyof typeof seen, id: string) => {
+    if (seen[kind].has(id)) throw new Error(`two ${kind}s with the id "${id.slice(MANAGED_ID_PREFIX.length)}"`);
+    seen[kind].add(id);
     return id;
   };
   const tokens = file.tokens.map((t) => ({

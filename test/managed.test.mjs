@@ -71,6 +71,13 @@ test("resolveManaged rejects bad files with a readable reason", () => {
     () => resolveManaged({ tokens: [{ label: "a", scope: "read", hash: "c".repeat(64) }, { label: "a", scope: "full", hash: "d".repeat(64) }] }),
     /two tokens with the id "a"/,
   );
+  // Tokens and webhooks have separate id spaces.
+  assert.doesNotThrow(() =>
+    resolveManaged({
+      tokens: [{ label: "bridge", scope: "read", hash: "c".repeat(64) }],
+      webhooks: [{ label: "bridge", url: "http://127.0.0.1:8644/x", secret: "whsec_dGVzdHNlY3JldHRlc3RzZWNyZXQ=" }],
+    }),
+  );
   assert.throws(() => resolveManaged({ webhooks: [{ label: "w", url: "http://example.com/x", secret: "s" }] }), /webhook "w"/);
   assert.throws(() => resolveManaged({ accounts: { a: { configDir: "/x" } }, defaultAccount: "b" }), /defaultAccount/);
 });
