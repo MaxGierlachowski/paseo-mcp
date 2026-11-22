@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0
+
+Paseo 0.17 and headless Linux hosts.
+
+- **Paseo 0.17:** `@getpaseo/client` and `@getpaseo/plugin` pinned to 0.17.3; the plugin manifest
+  requires `>=0.17.0 <0.18.0`.
+- **Bare providers work again:** Paseo 0.17 wants `provider/model` for new agents. A bare provider
+  (`defaultProvider: "claude"`, or `provider: "claude"` in `paseo_create_agent`) now gets the
+  provider's default model instead of failing.
+- **Release tarball:** `npm run release:tarball` builds `dist/paseo-mcp-<version>.tgz` (top-level
+  `paseo-mcp/`) and a `sha256sum`-format `.sha256`. Self-contained (plugin sources, built stdio server,
+  production `node_modules`, no native modules), so `paseo plugin install <dir>` and
+  `node <dir>/dist/index.js` work offline on any platform. The same commit and tar give the same bytes.
+- **Managed settings file** for hosts without the Paseo app: `$PASEO_HOME/paseo-mcp.managed.json`
+  (or `PASEO_MCP_MANAGED`) turns the HTTP server on and adds tokens and webhooks; watched and applied
+  live, its values win over the settings screen, which shows that it is in use.
+- **`paseo-mcp-admin`** (`dist/admin.js`): create, rotate, list and revoke tokens in that file
+  non-interactively; the token is printed once or written to a file, only its hash is stored.
+- **Headless Linux smoke test** (`scripts/linux-smoke.sh`), run in CI on Ubuntu 24.04 x64 and arm64:
+  a real daemon (relay and web UI off), the plugin from the tarball, the HTTP endpoint per scope, an
+  agent on a model-free ACP provider, events with `origin_ref`, a permission round trip, a verified
+  Standard Webhooks delivery, live token revocation and the stdio server.
+- README: "Headless Linux / agentbox" (install commands, endpoint, tokens, stdio config, webhooks);
+  examples use generic paths.
+
 ## 0.4.0 (unreleased)
 
 Webhooks any receiver can verify, and events that say who started an agent.

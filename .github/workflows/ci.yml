@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v1]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.3
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - name: Release tarball
+        run: npm run release:tarball
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tarball
+          path: |
+            dist/paseo-mcp-*.tgz
+            dist/paseo-mcp-*.tgz.sha256
+          if-no-files-found: error
+
+  linux-smoke:
+    name: Headless smoke (${{ matrix.runner }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.3
+      - uses: actions/download-artifact@v8
+        with:
+          name: tarball
+          path: dist
+      - name: Verify checksum
+        working-directory: dist
+        run: sha256sum -c paseo-mcp-*.tgz.sha256
+      - name: Paseo daemon + plugin + stdio from the tarball
+        run: scripts/linux-smoke.sh dist/paseo-mcp-*.tgz
+        env:
+          PASEO_VERSION: 0.17.3

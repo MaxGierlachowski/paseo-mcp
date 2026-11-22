@@ -14,6 +14,16 @@ export const StatusSchema = z.object({
   sessions: z.record(z.string(), z.number()),
   /** Last authenticated request per token id (ISO time). */
   lastUsed: z.record(z.string(), z.string()),
+  /** The managed settings file (headless installs): what it adds, or why it is ignored. */
+  managed: z
+    .object({
+      path: z.string(),
+      loaded: z.boolean(),
+      tokens: z.number(),
+      webhooks: z.number(),
+      error: z.string().nullable(),
+    })
+    .optional(),
 });
 
 export type McpStatus = z.infer<typeof StatusSchema>;
