@@ -269,7 +269,7 @@ paseo plugin install "/opt/paseo-mcp/$V/paseo-mcp"      # non-interactive; print
 paseo plugin ls paseo-mcp                                # STATUS running
 ```
 
-Without `pluginsEnabled: true` the daemon accepts the install but never starts the plugin. `paseo daemon config set` writes `$PASEO_HOME/config.json`; set the keys before the daemon starts or restart it. A directory install runs the plugin in place (no build step, no copy), and the plugin directory may be read-only: at runtime the plugin writes only under `$PASEO_HOME` (`paseo-mcp.json` with token "last used" times and webhook pause flags) and its stdio launcher `~/.local/bin/paseo-mcp`.
+Without `pluginsEnabled: true` the install succeeds but `paseo plugin ls` shows the plugin as `disabled`; set it and restart the daemon. `paseo daemon config set` writes `$PASEO_HOME/config.json`; set the keys before the daemon starts (with a running daemon some apply live, plugin changes need a restart). Wait for `paseo daemon status` to say `localDaemon: running` before `paseo plugin install`: the health route can answer a moment before the CLI finds the daemon. A directory install runs the plugin in place (no build step, no copy), and the plugin directory may be read-only: at runtime the plugin writes only under `$PASEO_HOME` (`paseo-mcp.json` with token "last used" times and webhook pause flags) and its stdio launcher `~/.local/bin/paseo-mcp`.
 
 **Updates:** unpack the new version next to the old one, then `paseo plugin remove paseo-mcp && paseo plugin install /opt/paseo-mcp/<new>/paseo-mcp`. `remove` deletes the settings saved by the screen, not the managed settings file, so tokens and webhooks from the file survive.
 

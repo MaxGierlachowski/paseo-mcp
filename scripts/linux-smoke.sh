@@ -85,6 +85,8 @@ fi
 paseo daemon run --home "$PASEO_HOME" >"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
 wait_for "daemon health" curl -fsS "http://127.0.0.1:$DAEMON_PORT/api/health"
+# The CLI finds the daemon through $PASEO_HOME/paseo.pid, which can lag behind the health route.
+wait_for "daemon status" sh -c "'$PASEO_BIN' daemon status | grep -q 'localDaemon: running'"
 kill -0 "$DAEMON_PID"
 curl -fsS "http://127.0.0.1:$DAEMON_PORT/api/health"; echo
 
